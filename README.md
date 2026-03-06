@@ -1,0 +1,2 @@
+# youtube-comment-filter
+AIを用いてYouTubeコメントの誹謗中傷をフィルタリングするChrome拡張
