@@ -1,6 +1,7 @@
 {
   "name": "youtube-comment-filter-server",
   "version": "1.0.0",
+  "description": "Backend server for YouTube comment filter",
   "main": "server.js",
   "type": "module",
   "scripts": {

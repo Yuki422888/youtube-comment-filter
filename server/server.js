@@ -212,10 +212,6 @@ app.post("/analyze-batch", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running at port ${PORT}`);
-});
-
 function getEffectiveScoringMode() {
   return ["gpt_only", "hybrid"].includes(SCORING_MODE)
     ? SCORING_MODE
@@ -309,7 +305,6 @@ function shouldEscalateToGPT(item) {
   const scores = moderation?.category_scores || {};
 
   if (!text) return false;
-
   if (text.length <= 3) return false;
   if (score < 0.08) return false;
   if (score >= 0.9) return false;
@@ -644,3 +639,7 @@ function containsNegativeEvaluation(text) {
 
   return patterns.some((re) => re.test(normalized));
 }
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+});
