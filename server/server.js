@@ -6,13 +6,12 @@ import OpenAI from "openai";
 console.log("===== YTCF SWITCHABLE SERVER LOADED =====");
 
 const app = express();
-
 const PORT = Number(process.env.PORT || 3000);
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
-const client = new OpenAI({
-  apiKey: OPENAI_API_KEY
-});
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const EXTENSION_SHARED_TOKEN = process.env.EXTENSION_SHARED_TOKEN || "";
+
+const client = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 const MAX_BATCH_SIZE = 20;
 const MAX_COMMENT_LENGTH = 500;
@@ -20,14 +19,12 @@ const SHORT_COMMENT_LENGTH = 6;
 
 const SCORING_MODE = String(process.env.SCORING_MODE || "gpt_only").toLowerCase();
 // "gpt_only" or "hybrid"
-
 const ENABLE_GPT_FALLBACK =
   String(process.env.ENABLE_GPT_FALLBACK || "true").toLowerCase() === "true";
 
 const GPT_MODEL = process.env.GPT_MODEL || "gpt-4.1-mini";
 const GPT_FALLBACK_MODEL = process.env.GPT_FALLBACK_MODEL || GPT_MODEL;
-const MODERATION_MODEL =
-  process.env.MODERATION_MODEL || "omni-moderation-latest";
+const MODERATION_MODEL = process.env.MODERATION_MODEL || "omni-moderation-latest";
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
@@ -35,8 +32,12 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .filter(Boolean);
 
 if (!OPENAI_API_KEY) {
+  console.warn("[WARN] OPENAI_API_KEY is missing. Requests to OpenAI will fail.");
+}
+
+if (!EXTENSION_SHARED_TOKEN) {
   console.warn(
-    "[WARN] OPENAI_API_KEY is missing. Requests to OpenAI will fail."
+    "[WARN] EXTENSION_SHARED_TOKEN is missing. Token auth will reject requests."
   );
 }
 
@@ -67,7 +68,7 @@ app.use(
       }
 
       callback(new Error(`CORS blocked origin: ${origin}`));
-    }
+    },
   })
 );
 
@@ -80,16 +81,36 @@ const limiter = rateLimit({
   legacyHeaders: false,
   message: {
     success: false,
-    error: "Too many requests. Please try again later."
-  }
+    error: "Too many requests. Please try again later.",
+  },
 });
 
 app.use(limiter);
 
+function requireExtensionToken(req, res, next) {
+  const requestToken = req.header("X-YTCF-Token");
+
+  if (!EXTENSION_SHARED_TOKEN) {
+    return res.status(500).json({
+      success: false,
+      error: "Server misconfiguration: missing EXTENSION_SHARED_TOKEN",
+    });
+  }
+
+  if (!requestToken || requestToken !== EXTENSION_SHARED_TOKEN) {
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized request",
+    });
+  }
+
+  next();
+}
+
 app.get("/", (req, res) => {
   return res.json({
     success: true,
-    message: "YTCF switchable server is running"
+    message: "YTCF switchable server is running",
   });
 });
 
@@ -101,11 +122,11 @@ app.get("/health", (req, res) => {
     moderationModel: MODERATION_MODEL,
     gptModel: GPT_MODEL,
     gptFallbackEnabled: ENABLE_GPT_FALLBACK,
-    gptFallbackModel: GPT_FALLBACK_MODEL
+    gptFallbackModel: GPT_FALLBACK_MODEL,
   });
 });
 
-app.post("/analyze-batch", async (req, res) => {
+app.post("/analyze-batch", requireExtensionToken, async (req, res) => {
   console.log("===== /analyze-batch HIT =====");
 
   try {
@@ -114,19 +135,18 @@ app.post("/analyze-batch", async (req, res) => {
     if (!Array.isArray(comments) || comments.length === 0) {
       return res.status(400).json({
         success: false,
-        error: "comments must be a non-empty array of strings"
+        error: "comments must be a non-empty array of strings",
       });
     }
 
     if (comments.length > MAX_BATCH_SIZE) {
       return res.status(400).json({
         success: false,
-        error: `Too many comments. Maximum batch size is ${MAX_BATCH_SIZE}`
+        error: `Too many comments. Maximum batch size is ${MAX_BATCH_SIZE}`,
       });
     }
 
     const scoringMode = getEffectiveScoringMode();
-
     console.log("Scoring mode:", scoringMode);
     console.log("Received batch size:", comments.length);
 
@@ -141,7 +161,7 @@ app.post("/analyze-batch", async (req, res) => {
           index,
           text,
           score: clampScore(ruleScore),
-          source: "rule"
+          source: "rule",
         };
       } else {
         aiTargets.push({ index, text });
@@ -151,13 +171,11 @@ app.post("/analyze-batch", async (req, res) => {
     if (aiTargets.length > 0) {
       if (scoringMode === "gpt_only") {
         const gptResults = await analyzeByGPT(aiTargets, GPT_MODEL);
-
         gptResults.forEach((item) => {
           finalResults[item.index] = item;
         });
       } else if (scoringMode === "hybrid") {
         const moderationResults = await analyzeByModeration(aiTargets);
-
         moderationResults.forEach((item) => {
           finalResults[item.index] = item;
         });
@@ -176,7 +194,6 @@ app.post("/analyze-batch", async (req, res) => {
             fallbackTargets,
             GPT_FALLBACK_MODEL
           );
-
           gptResults.forEach((item) => {
             finalResults[item.index] = item;
           });
@@ -186,12 +203,11 @@ app.post("/analyze-batch", async (req, res) => {
 
     const results = comments.map((text, index) => {
       const item = finalResults[index];
-
       return {
         index,
         text,
         score: clampScore(item?.score),
-        source: item?.source || "unknown"
+        source: item?.source || "unknown",
       };
     });
 
@@ -200,14 +216,13 @@ app.post("/analyze-batch", async (req, res) => {
     return res.json({
       success: true,
       scoringMode,
-      results
+      results,
     });
   } catch (error) {
     console.error("Analyze batch error:", error);
-
     return res.status(500).json({
       success: false,
-      error: error?.message || "analyze-batch failed"
+      error: error?.message || "analyze-batch failed",
     });
   }
 });
@@ -223,7 +238,7 @@ async function analyzeByModeration(aiTargets) {
 
   const response = await client.moderations.create({
     model: MODERATION_MODEL,
-    input: inputs
+    input: inputs,
   });
 
   const results = Array.isArray(response?.results) ? response.results : [];
@@ -241,7 +256,7 @@ async function analyzeByModeration(aiTargets) {
       text: target.text,
       score,
       source: "moderation",
-      moderation
+      moderation,
     };
   });
 }
@@ -328,7 +343,7 @@ async function analyzeByGPT(targets, modelName) {
   const response = await client.responses.create({
     model: modelName,
     input: prompt,
-    temperature: 0
+    temperature: 0,
   });
 
   const raw = String(response.output_text || "").trim();
@@ -347,7 +362,7 @@ async function analyzeByGPT(targets, modelName) {
       index: target.index,
       text: target.text,
       score: clampScore(matched?.score),
-      source: modelName === GPT_MODEL ? "gpt" : "gpt_fallback"
+      source: modelName === GPT_MODEL ? "gpt" : "gpt_fallback",
     };
   });
 }
@@ -355,6 +370,7 @@ async function analyzeByGPT(targets, modelName) {
 function buildPrompt(comments) {
   return `
 あなたはYouTubeコメントの攻撃性を評価するAIです。
+
 各コメントについて、攻撃性を 0.0〜1.0 の数値で評価してください。
 
 評価基準:
@@ -416,7 +432,6 @@ function parseAIResponse(rawText) {
   }
 
   let cleaned = rawText.trim();
-
   cleaned = cleaned.replace(/^```json\s*/i, "");
   cleaned = cleaned.replace(/^```\s*/i, "");
   cleaned = cleaned.replace(/\s*```$/i, "");
@@ -435,11 +450,9 @@ function parseAIResponse(rawText) {
 
 function clampScore(value) {
   const numValue = Number(value);
-
   if (!Number.isFinite(numValue)) return 0;
   if (numValue < 0) return 0;
   if (numValue > 1) return 1;
-
   return numValue;
 }
 
@@ -473,7 +486,7 @@ function getRuleBasedScore(text) {
     ["カス", 0.8],
     ["かす", 0.8],
     ["うざい", 0.7],
-    ["最悪", 0.65]
+    ["最悪", 0.65],
   ]);
 
   if (exactHigh.has(normalized)) {
@@ -487,7 +500,7 @@ function getRuleBasedScore(text) {
     "ころす",
     "消えろ",
     "失せろ",
-    "くたばれ"
+    "くたばれ",
   ];
 
   for (const word of containsVeryHigh) {
@@ -509,7 +522,7 @@ function getRuleBasedScore(text) {
     "カス",
     "かす",
     "うざい",
-    "最悪"
+    "最悪",
   ];
 
   for (const word of containsHigh) {
@@ -547,7 +560,7 @@ function isClearlyHarmlessShortText(text) {
     "最高",
     "天才",
     "いいね",
-    "ありがとう"
+    "ありがとう",
   ]);
 
   if (harmlessSet.has(text)) {
@@ -578,7 +591,7 @@ function containsSecondPersonAttack(text) {
     /お前バカ/,
     /お前アホ/,
     /お前下手/,
-    /お前終わってる/
+    /お前終わってる/,
   ];
 
   return patterns.some((re) => re.test(normalized));
@@ -602,7 +615,7 @@ function containsSarcasticAttackPattern(text) {
     /その程度/,
     /よくこれで出せたな/,
     /誰が見るんだよ/,
-    /よくそんな自信あるな/
+    /よくそんな自信あるな/,
   ];
 
   return patterns.some((re) => re.test(normalized));
@@ -634,7 +647,7 @@ function containsNegativeEvaluation(text) {
     /無理だわ/,
     /見苦しい/,
     /黒歴史/,
-    /しょうもない/
+    /しょうもない/,
   ];
 
   return patterns.some((re) => re.test(normalized));

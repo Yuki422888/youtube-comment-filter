@@ -1,19 +1,28 @@
 const ENV = {
   LOCAL: "local",
-  PRODUCTION: "production"
+  PRODUCTION: "production",
 };
 
 // 開発中は "local"
-// Render公開後は "production" に切り替える
+// Render公開後は "production"
 const CURRENT_ENV = ENV.PRODUCTION;
 
-const API_BASE_URLS = {
-  [ENV.LOCAL]: "http://localhost:3000",
-  [ENV.PRODUCTION]: "https://youtube-comment-filter-server.onrender.com"
+const CONFIG = {
+  [ENV.LOCAL]: {
+    API_BASE_URL: "http://localhost:3000",
+    EXTENSION_SHARED_TOKEN: "local_dev_token_change_me",
+  },
+  [ENV.PRODUCTION]: {
+    API_BASE_URL: "https://youtube-comment-filter-server.onrender.com",
+    // 本番用トークンをここに入れる
+    // 例: "ytcf_prod_xxxxxxxxxxxxxxxxx"
+    EXTENSION_SHARED_TOKEN: "ytcf_prod_4Kf8x2Lm9Qa7Zp3Rn6Uv1Ws5",
+  },
 };
 
-const API_BASE_URL = API_BASE_URLS[CURRENT_ENV];
-const ANALYZE_BATCH_URL = `${API_BASE_URL}/analyze-batch`;
+function getConfig() {
+  return CONFIG[CURRENT_ENV];
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "ANALYZE_COMMENTS_BATCH") {
@@ -27,10 +36,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (comments.length === 0) {
         sendResponse({
           success: false,
-          error: "comments must be a non-empty array"
+          error: "comments must be a non-empty array",
         });
         return;
       }
+
+      const { API_BASE_URL } = getConfig();
 
       console.log("[YTCF background] current env =", CURRENT_ENV);
       console.log("[YTCF background] API_BASE_URL =", API_BASE_URL);
@@ -42,16 +53,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         throw new Error("Invalid server response format");
       }
 
-      sendResponse({
-        success: true,
-        data
-      });
+      sendResponse({ success: true, data });
     } catch (error) {
       console.error("[YTCF background] error:", error);
-
       sendResponse({
         success: false,
-        error: error?.message || "Unknown background error"
+        error: error?.message || "Unknown background error",
       });
     }
   })();
@@ -64,13 +71,17 @@ async function postAnalyzeBatch(comments) {
   const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const response = await fetch(ANALYZE_BATCH_URL, {
+    const { API_BASE_URL, EXTENSION_SHARED_TOKEN } = getConfig();
+    const analyzeBatchUrl = `${API_BASE_URL}/analyze-batch`;
+
+    const response = await fetch(analyzeBatchUrl, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-YTCF-Token": EXTENSION_SHARED_TOKEN,
       },
       body: JSON.stringify({ comments }),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -81,7 +92,6 @@ async function postAnalyzeBatch(comments) {
     }
 
     const data = await response.json();
-
     return normalizeAnalyzeResponse(data, comments);
   } catch (error) {
     if (error.name === "AbortError") {
@@ -114,23 +124,21 @@ function normalizeAnalyzeResponse(data, comments) {
       index,
       text,
       score,
-      source: item.source || "unknown"
+      source: item.source || "unknown",
     };
   });
 
   return {
     success: true,
-    results
+    results,
   };
 }
 
 function clampScore(value) {
   const num = Number(value);
-
   if (!Number.isFinite(num)) return 0;
   if (num < 0) return 0;
   if (num > 1) return 1;
-
   return num;
 }
 
