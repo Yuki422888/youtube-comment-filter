@@ -1,73 +1,197 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<<<<<<< HEAD
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>YouTube Toxic Comment Filter</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      width: 260px;
-      padding: 16px;
       margin: 0;
+      padding: 16px;
+      width: 300px;
+      font-family: Arial, sans-serif;
+      background: #ffffff;
+      color: #111827;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
     }
 
     h1 {
-      font-size: 16px;
-      margin: 0 0 16px;
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
     }
 
-    .section {
-      margin-bottom: 16px;
+    .subtext {
+      font-size: 12px;
+      color: #6b7280;
+      line-height: 1.5;
     }
 
-    label {
-      display: block;
-      margin-bottom: 8px;
+    .card {
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 12px;
+      background: #f9fafb;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .label-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .label-title {
       font-size: 14px;
+      font-weight: 600;
+    }
+
+    .label-desc {
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 46px;
+      height: 26px;
+      flex-shrink: 0;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider-switch {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background-color: #d1d5db;
+      transition: 0.2s;
+      border-radius: 999px;
+    }
+
+    .slider-switch:before {
+      position: absolute;
+      content: "";
+      height: 20px;
+      width: 20px;
+      left: 3px;
+      top: 3px;
+      background-color: white;
+      transition: 0.2s;
+      border-radius: 50%;
+    }
+
+    .switch input:checked + .slider-switch {
+      background-color: #2563eb;
+    }
+
+    .switch input:checked + .slider-switch:before {
+      transform: translateX(20px);
+    }
+
+    .threshold-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      gap: 12px;
+    }
+
+    .threshold-value {
+      font-size: 14px;
+      font-weight: 700;
+      color: #2563eb;
+      min-width: 44px;
+      text-align: right;
     }
 
     input[type="range"] {
       width: 100%;
     }
 
-    .value {
-      margin-top: 6px;
-      font-size: 13px;
-      color: #444;
+    .footer {
+      font-size: 11px;
+      color: #6b7280;
+      line-height: 1.5;
+    }
+
+    .status {
+      font-size: 12px;
+      color: #374151;
+      background: #eff6ff;
+      border: 1px solid #dbeafe;
+      border-radius: 10px;
+      padding: 10px;
     }
   </style>
 </head>
 <body>
-  <h1>Toxic Comment Filter</h1>
+  <div class="container">
+    <div>
+      <h1>YouTube Toxic Comment Filter</h1>
+      <div class="subtext">
+        YouTubeコメントの攻撃的・有害なコメントを自動でフィルタします。
+      </div>
+    </div>
 
-  <div class="section">
-    <label>
-      <input type="checkbox" id="filterToggle" />
-      Enable filtering
-    </label>
-  </div>
+    <div class="card">
+      <div class="row">
+        <div class="label-group">
+          <div class="label-title">フィルター</div>
+          <div class="label-desc">有害コメントの自動非表示をON/OFF</div>
+        </div>
 
-  <div class="section">
-    <label for="thresholdSlider">Threshold</label>
-    <input
-      type="range"
-      id="thresholdSlider"
-      min="0"
-      max="1"
-      step="0.01"
-    />
-    <div class="value">Current: <span id="thresholdValue">0.50</span></div>
+        <label class="switch">
+          <input type="checkbox" id="filterToggle" />
+          <span class="slider-switch"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="threshold-header">
+        <div class="label-group">
+          <div class="label-title">しきい値</div>
+          <div class="label-desc">この値以上を危険コメントとして判定</div>
+        </div>
+        <div class="threshold-value" id="thresholdValue">0.50</div>
+      </div>
+
+      <input
+        type="range"
+        id="thresholdSlider"
+        min="0"
+        max="1"
+        step="0.01"
+        value="0.5"
+      />
+    </div>
+
+    <div class="status">
+      初期値は 0.50 です。値を下げるほど多くのコメントを非表示にし、上げるほど厳しさが弱まります。
+    </div>
+
+    <div class="footer">
+      設定は保存され、YouTubeページ上の判定に反映されます。
+    </div>
   </div>
 
   <script src="popup.js"></script>
-=======
-  <meta charset="UTF-8">
-  <title>YouTube Comment Filter</title>
-</head>
-<body>
-  <h3>YouTube Comment Filter</h3>
-  <p>拡張機能は有効です。</p>
->>>>>>> 1fd6f53507c98fa8a6a344792ddd2e0bc288cc80
 </body>
 </html>
