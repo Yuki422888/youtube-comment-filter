@@ -5,11 +5,11 @@ const ENV = {
 
 // 開発中は "local"
 // Render公開後は "production" に切り替える
-const CURRENT_ENV = ENV.LOCAL;
+const CURRENT_ENV = ENV.PRODUCTION;
 
 const API_BASE_URLS = {
   [ENV.LOCAL]: "http://localhost:3000",
-  [ENV.PRODUCTION]: "https://your-render-service.onrender.com"
+  [ENV.PRODUCTION]: "https://youtube-comment-filter-server.onrender.com"
 };
 
 const API_BASE_URL = API_BASE_URLS[CURRENT_ENV];
