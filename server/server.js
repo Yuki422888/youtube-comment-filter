@@ -2,26 +2,36 @@ import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import OpenAI from "openai";
+import crypto from "crypto";
 
-console.log("===== YTCF SWITCHABLE SERVER LOADED =====");
+console.log("===== YTCF SECURE SERVER LOADED =====");
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const EXTENSION_SHARED_TOKEN = process.env.EXTENSION_SHARED_TOKEN || "";
+const EXTENSION_SHARED_TOKEN_PREVIOUS =
+  process.env.EXTENSION_SHARED_TOKEN_PREVIOUS || "";
 
 const client = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-const MAX_BATCH_SIZE = 20;
-const MAX_COMMENT_LENGTH = 500;
+const MAX_BATCH_SIZE = Number(process.env.MAX_BATCH_SIZE || 20);
+const MAX_COMMENT_LENGTH = Number(process.env.MAX_COMMENT_LENGTH || 500);
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "1mb";
 const SHORT_COMMENT_LENGTH = 6;
 
+const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
+const RATE_LIMIT_MAX_PER_WINDOW = Number(
+  process.env.RATE_LIMIT_MAX_PER_WINDOW || 40
+);
+
+const DAILY_COMMENT_BUDGET = Number(process.env.DAILY_COMMENT_BUDGET || 12000);
+const DAILY_REQUEST_BUDGET = Number(process.env.DAILY_REQUEST_BUDGET || 2500);
+
 const SCORING_MODE = String(process.env.SCORING_MODE || "gpt_only").toLowerCase();
-// "gpt_only" or "hybrid"
 const ENABLE_GPT_FALLBACK =
   String(process.env.ENABLE_GPT_FALLBACK || "true").toLowerCase() === "true";
-
 const GPT_MODEL = process.env.GPT_MODEL || "gpt-4.1-mini";
 const GPT_FALLBACK_MODEL = process.env.GPT_FALLBACK_MODEL || GPT_MODEL;
 const MODERATION_MODEL = process.env.MODERATION_MODEL || "omni-moderation-latest";
@@ -32,19 +42,10 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .filter(Boolean);
 
 if (!OPENAI_API_KEY) {
-  console.warn("[WARN] OPENAI_API_KEY is missing. Requests to OpenAI will fail.");
+  console.warn("[WARN] OPENAI_API_KEY is missing.");
 }
-
 if (!EXTENSION_SHARED_TOKEN) {
-  console.warn(
-    "[WARN] EXTENSION_SHARED_TOKEN is missing. Token auth will reject requests."
-  );
-}
-
-if (!["gpt_only", "hybrid"].includes(SCORING_MODE)) {
-  console.warn(
-    `[WARN] Invalid SCORING_MODE="${SCORING_MODE}". Falling back to "gpt_only".`
-  );
+  console.warn("[WARN] EXTENSION_SHARED_TOKEN is missing.");
 }
 
 app.set("trust proxy", 1);
@@ -52,40 +53,183 @@ app.set("trust proxy", 1);
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-
-      if (ALLOWED_ORIGINS.length === 0) {
-        callback(null, true);
-        return;
-      }
-
-      if (ALLOWED_ORIGINS.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-
-      callback(new Error(`CORS blocked origin: ${origin}`));
+      if (!origin) return callback(null, true);
+      if (ALLOWED_ORIGINS.length === 0) return callback(null, true);
+      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked origin: ${origin}`));
     },
   })
 );
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 120,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    success: false,
-    error: "Too many requests. Please try again later.",
-  },
+/**
+ * =========================
+ * Logging helpers
+ * =========================
+ */
+function makeReqId() {
+  return crypto.randomBytes(6).toString("hex");
+}
+
+function getClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.length > 0) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.ip || "unknown";
+}
+
+function maskToken(token) {
+  if (!token) return "none";
+  if (token.length <= 8) return "***";
+  return `${token.slice(0, 4)}...${token.slice(-4)}`;
+}
+
+function logInfo(req, message, extra = {}) {
+  console.log(
+    JSON.stringify({
+      level: "info",
+      time: new Date().toISOString(),
+      reqId: req.reqId,
+      ip: getClientIp(req),
+      path: req.path,
+      message,
+      ...extra,
+    })
+  );
+}
+
+function logWarn(req, message, extra = {}) {
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      time: new Date().toISOString(),
+      reqId: req.reqId,
+      ip: getClientIp(req),
+      path: req.path,
+      message,
+      ...extra,
+    })
+  );
+}
+
+function logError(req, message, extra = {}) {
+  console.error(
+    JSON.stringify({
+      level: "error",
+      time: new Date().toISOString(),
+      reqId: req.reqId,
+      ip: getClientIp(req),
+      path: req.path,
+      message,
+      ...extra,
+    })
+  );
+}
+
+app.use((req, _res, next) => {
+  req.reqId = makeReqId();
+  next();
 });
 
-app.use(limiter);
+/**
+ * =========================
+ * Simple in-memory daily budget
+ * Render Free ならまずこれで十分
+ * （再起動でリセットされる）
+ * =========================
+ */
+const dailyBudget = {
+  date: getTodayKey(),
+  requests: 0,
+  comments: 0,
+};
+
+function getTodayKey() {
+  const now = new Date();
+  const yyyy = now.getUTCFullYear();
+  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(now.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function resetDailyBudgetIfNeeded() {
+  const today = getTodayKey();
+  if (dailyBudget.date !== today) {
+    dailyBudget.date = today;
+    dailyBudget.requests = 0;
+    dailyBudget.comments = 0;
+  }
+}
+
+function canSpendBudget(commentCount) {
+  resetDailyBudgetIfNeeded();
+  if (dailyBudget.requests + 1 > DAILY_REQUEST_BUDGET) return false;
+  if (dailyBudget.comments + commentCount > DAILY_COMMENT_BUDGET) return false;
+  return true;
+}
+
+function spendBudget(commentCount) {
+  resetDailyBudgetIfNeeded();
+  dailyBudget.requests += 1;
+  dailyBudget.comments += commentCount;
+}
+
+function getBudgetSnapshot() {
+  resetDailyBudgetIfNeeded();
+  return {
+    date: dailyBudget.date,
+    requests: dailyBudget.requests,
+    comments: dailyBudget.comments,
+    requestBudget: DAILY_REQUEST_BUDGET,
+    commentBudget: DAILY_COMMENT_BUDGET,
+  };
+}
+
+/**
+ * =========================
+ * Fail-open response
+ * 判定できない時はコメントを見せる
+ * =========================
+ */
+function buildFailOpenResults(comments, source = "fail_open") {
+  return comments.map((text, index) => ({
+    index,
+    text,
+    score: 0,
+    source,
+  }));
+}
+
+function failOpen(res, comments, reason, extra = {}) {
+  return res.status(200).json({
+    success: true,
+    degraded: true,
+    failOpen: true,
+    reason,
+    results: buildFailOpenResults(comments, reason),
+    ...extra,
+  });
+}
+
+/**
+ * =========================
+ * Auth
+ * current / previous token 両対応
+ * =========================
+ */
+function isValidExtensionToken(requestToken) {
+  if (!requestToken) return false;
+  if (requestToken === EXTENSION_SHARED_TOKEN) return true;
+  if (
+    EXTENSION_SHARED_TOKEN_PREVIOUS &&
+    requestToken === EXTENSION_SHARED_TOKEN_PREVIOUS
+  ) {
+    return true;
+  }
+  return false;
+}
 
 function requireExtensionToken(req, res, next) {
   const requestToken = req.header("X-YTCF-Token");
@@ -97,7 +241,10 @@ function requireExtensionToken(req, res, next) {
     });
   }
 
-  if (!requestToken || requestToken !== EXTENSION_SHARED_TOKEN) {
+  if (!isValidExtensionToken(requestToken)) {
+    logWarn(req, "Unauthorized request", {
+      tokenPreview: maskToken(requestToken),
+    });
     return res.status(401).json({
       success: false,
       error: "Unauthorized request",
@@ -107,14 +254,45 @@ function requireExtensionToken(req, res, next) {
   next();
 }
 
-app.get("/", (req, res) => {
+/**
+ * =========================
+ * Analyze route limiter
+ * IP + token 単位で制限
+ * 制限時も fail-open
+ * =========================
+ */
+const analyzeLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX_PER_WINDOW,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const ip = getClientIp(req);
+    const token = req.header("X-YTCF-Token") || "no-token";
+    return `${ip}:${token}`;
+  },
+  handler: (req, res) => {
+    const comments = normalizeComments(req.body?.comments);
+    logWarn(req, "Rate limit triggered", {
+      commentCount: comments.length,
+    });
+    return failOpen(res, comments, "rate_limited");
+  },
+});
+
+/**
+ * =========================
+ * Health
+ * =========================
+ */
+app.get("/", (_req, res) => {
   return res.json({
     success: true,
-    message: "YTCF switchable server is running",
+    message: "YTCF secure server is running",
   });
 });
 
-app.get("/health", (req, res) => {
+app.get("/health", (_req, res) => {
   return res.json({
     success: true,
     status: "ok",
@@ -123,115 +301,202 @@ app.get("/health", (req, res) => {
     gptModel: GPT_MODEL,
     gptFallbackEnabled: ENABLE_GPT_FALLBACK,
     gptFallbackModel: GPT_FALLBACK_MODEL,
+    budget: getBudgetSnapshot(),
   });
 });
 
-app.post("/analyze-batch", requireExtensionToken, async (req, res) => {
-  console.log("===== /analyze-batch HIT =====");
+/**
+ * =========================
+ * Main endpoint
+ * =========================
+ */
+app.post(
+  "/analyze-batch",
+  requireExtensionToken,
+  analyzeLimiter,
+  async (req, res) => {
+    const startedAt = Date.now();
 
-  try {
-    const comments = normalizeComments(req.body?.comments);
+    try {
+      const comments = normalizeComments(req.body?.comments);
 
-    if (!Array.isArray(comments) || comments.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: "comments must be a non-empty array of strings",
-      });
-    }
-
-    if (comments.length > MAX_BATCH_SIZE) {
-      return res.status(400).json({
-        success: false,
-        error: `Too many comments. Maximum batch size is ${MAX_BATCH_SIZE}`,
-      });
-    }
-
-    const scoringMode = getEffectiveScoringMode();
-    console.log("Scoring mode:", scoringMode);
-    console.log("Received batch size:", comments.length);
-
-    const finalResults = new Array(comments.length).fill(null);
-    const aiTargets = [];
-
-    comments.forEach((text, index) => {
-      const ruleScore = getRuleBasedScore(text);
-
-      if (ruleScore != null) {
-        finalResults[index] = {
-          index,
-          text,
-          score: clampScore(ruleScore),
-          source: "rule",
-        };
-      } else {
-        aiTargets.push({ index, text });
+      if (!Array.isArray(comments) || comments.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "comments must be a non-empty array of strings",
+        });
       }
-    });
 
-    if (aiTargets.length > 0) {
-      if (scoringMode === "gpt_only") {
-        const gptResults = await analyzeByGPT(aiTargets, GPT_MODEL);
-        gptResults.forEach((item) => {
-          finalResults[item.index] = item;
+      if (comments.length > MAX_BATCH_SIZE) {
+        return res.status(400).json({
+          success: false,
+          error: `Too many comments. Maximum batch size is ${MAX_BATCH_SIZE}`,
         });
-      } else if (scoringMode === "hybrid") {
-        const moderationResults = await analyzeByModeration(aiTargets);
-        moderationResults.forEach((item) => {
-          finalResults[item.index] = item;
+      }
+
+      const totalChars = comments.reduce((sum, text) => sum + text.length, 0);
+      if (totalChars > MAX_BATCH_SIZE * MAX_COMMENT_LENGTH) {
+        return res.status(400).json({
+          success: false,
+          error: "Payload text is too large",
         });
+      }
 
-        const fallbackTargets = moderationResults.filter(shouldEscalateToGPT);
+      if (!canSpendBudget(comments.length)) {
+        logWarn(req, "Daily budget guard triggered", {
+          commentCount: comments.length,
+          budget: getBudgetSnapshot(),
+        });
+        return failOpen(res, comments, "budget_guard", {
+          budget: getBudgetSnapshot(),
+        });
+      }
 
-        console.log(
-          "Moderation targets:",
-          aiTargets.length,
-          "| GPT fallback targets:",
-          fallbackTargets.length
-        );
+      spendBudget(comments.length);
 
-        if (ENABLE_GPT_FALLBACK && fallbackTargets.length > 0) {
-          const gptResults = await analyzeByGPT(
-            fallbackTargets,
-            GPT_FALLBACK_MODEL
-          );
+      const scoringMode = getEffectiveScoringMode();
+
+      logInfo(req, "Analyze request accepted", {
+        commentCount: comments.length,
+        totalChars,
+        scoringMode,
+        budget: getBudgetSnapshot(),
+      });
+
+      const finalResults = new Array(comments.length).fill(null);
+      const aiTargets = [];
+
+      comments.forEach((text, index) => {
+        const ruleScore = getRuleBasedScore(text);
+        if (ruleScore != null) {
+          finalResults[index] = {
+            index,
+            text,
+            score: clampScore(ruleScore),
+            source: "rule",
+          };
+        } else {
+          aiTargets.push({ index, text });
+        }
+      });
+
+      if (aiTargets.length > 0) {
+        if (scoringMode === "gpt_only") {
+          const gptResults = await analyzeByGPT(aiTargets, GPT_MODEL);
           gptResults.forEach((item) => {
             finalResults[item.index] = item;
           });
+        } else if (scoringMode === "hybrid") {
+          const moderationResults = await analyzeByModeration(aiTargets);
+          moderationResults.forEach((item) => {
+            finalResults[item.index] = item;
+          });
+
+          const fallbackTargets = moderationResults.filter(shouldEscalateToGPT);
+
+          if (ENABLE_GPT_FALLBACK && fallbackTargets.length > 0) {
+            const gptResults = await analyzeByGPT(
+              fallbackTargets,
+              GPT_FALLBACK_MODEL
+            );
+            gptResults.forEach((item) => {
+              finalResults[item.index] = item;
+            });
+          }
         }
       }
+
+      const results = comments.map((text, index) => {
+        const item = finalResults[index];
+        return {
+          index,
+          text,
+          score: clampScore(item?.score),
+          source: item?.source || "unknown",
+        };
+      });
+
+      logInfo(req, "Analyze request completed", {
+        elapsedMs: Date.now() - startedAt,
+        commentCount: comments.length,
+      });
+
+      return res.json({
+        success: true,
+        degraded: false,
+        scoringMode,
+        results,
+      });
+    } catch (error) {
+      const comments = normalizeComments(req.body?.comments);
+
+      logError(req, "Analyze batch error", {
+        error: error?.message || "unknown error",
+      });
+
+      // OpenAIや一時エラーでもYouTube利用自体は止めない
+      return failOpen(res, comments, "server_error");
     }
-
-    const results = comments.map((text, index) => {
-      const item = finalResults[index];
-      return {
-        index,
-        text,
-        score: clampScore(item?.score),
-        source: item?.source || "unknown",
-      };
-    });
-
-    console.log("Final batch results:", results);
-
-    return res.json({
-      success: true,
-      scoringMode,
-      results,
-    });
-  } catch (error) {
-    console.error("Analyze batch error:", error);
-    return res.status(500).json({
-      success: false,
-      error: error?.message || "analyze-batch failed",
-    });
   }
-});
+);
 
+/**
+ * =========================
+ * Existing helpers
+ * ここから下は今のあなたの既存ロジックを基本そのまま使う
+ * =========================
+ */
 function getEffectiveScoringMode() {
   return ["gpt_only", "hybrid"].includes(SCORING_MODE)
     ? SCORING_MODE
     : "gpt_only";
 }
+
+function normalizeComments(input) {
+  if (!Array.isArray(input)) return [];
+  const normalized = [];
+
+  for (const item of input) {
+    if (typeof item !== "string") continue;
+    const text = normalizeText(item).slice(0, MAX_COMMENT_LENGTH);
+    if (!text) continue;
+    normalized.push(text);
+    if (normalized.length >= MAX_BATCH_SIZE) break;
+  }
+
+  return normalized;
+}
+
+function normalizeText(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function num(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function clampScore(value) {
+  const n = num(value);
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+// ---- ここから下はあなたの既存実装をそのまま残す ----
+// analyzeByModeration
+// moderationToToxicScore
+// shouldEscalateToGPT
+// analyzeByGPT
+// buildPrompt
+// parseAIResponse
+// getRuleBasedScore
+// containsSecondPersonAttack
+// containsNegativeEvaluation
+// containsSarcasticAttackPattern
+// ...など
+
+
 
 async function analyzeByModeration(aiTargets) {
   const inputs = aiTargets.map((item) => item.text);
@@ -656,3 +921,4 @@ function containsNegativeEvaluation(text) {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
 });
+

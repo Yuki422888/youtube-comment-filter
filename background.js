@@ -12,7 +12,7 @@ const CONFIG = {
   },
   [ENV.PRODUCTION]: {
     API_BASE_URL: "https://youtube-comment-filter-server.onrender.com",
-    EXTENSION_SHARED_TOKEN: "ytcf_prod_4Kf8x2Lm9Qa7Zp3Rn6Uv1Ws5",
+    EXTENSION_SHARED_TOKEN: "1e37dbe46e4ed26b96c0b730d8687dde414f05f0ac941a79ae4b0d45fb15844d",
   },
 };
 
