@@ -3,8 +3,6 @@ const ENV = {
   PRODUCTION: "production",
 };
 
-// 開発中は "local"
-// Render公開後は "production"
 const CURRENT_ENV = ENV.PRODUCTION;
 
 const CONFIG = {
@@ -14,11 +12,11 @@ const CONFIG = {
   },
   [ENV.PRODUCTION]: {
     API_BASE_URL: "https://youtube-comment-filter-server.onrender.com",
-    // 本番用トークンをここに入れる
-    // 例: "ytcf_prod_xxxxxxxxxxxxxxxxx"
     EXTENSION_SHARED_TOKEN: "ytcf_prod_4Kf8x2Lm9Qa7Zp3Rn6Uv1Ws5",
   },
 };
+
+const REQUEST_TIMEOUT_MS = 45000;
 
 function getConfig() {
   return CONFIG[CURRENT_ENV];
@@ -68,13 +66,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function postAnalyzeBatch(comments) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     const { API_BASE_URL, EXTENSION_SHARED_TOKEN } = getConfig();
-    const analyzeBatchUrl = `${API_BASE_URL}/analyze-batch`;
+    const url = `${API_BASE_URL}/analyze-batch`;
 
-    const response = await fetch(analyzeBatchUrl, {
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

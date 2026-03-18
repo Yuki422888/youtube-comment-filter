@@ -3,21 +3,23 @@
 
   const STORAGE_KEYS = {
     FILTER_ENABLED: "filterEnabled",
-    THRESHOLD: "threshold"
+    THRESHOLD: "threshold",
   };
 
   const DEFAULTS = {
     filterEnabled: true,
-    threshold: 0.5
+    threshold: 0.5,
   };
 
   const CACHE_KEYS = {
-    SCORE_CACHE: "ytcf_score_cache_v1"
+    SCORE_CACHE: "ytcf_score_cache_v1",
   };
 
   const MAX_BATCH_SIZE = 20;
   const BATCH_DELAY_MS = 500;
   const MAX_SESSION_CACHE_ENTRIES = 500;
+
+  const RETRY_DELAYS_MS = [5000, 15000, 30000];
 
   let analyzeQueue = [];
   let queueTimer = null;
@@ -27,8 +29,8 @@
 
   const scoreCache = new Map();
   const commentMap = new WeakMap();
-
   const videoScores = [];
+
   let toxicScoreBox = null;
   let observer = null;
 
@@ -64,10 +66,7 @@
       }
 
       if (shouldReapply) {
-        console.log("[YTCF] settings updated:", {
-          filterEnabled,
-          threshold
-        });
+        console.log("[YTCF] settings updated:", { filterEnabled, threshold });
         reapplyAllCommentStates();
         updateToxicScoreBox();
       }
@@ -87,16 +86,13 @@
   async function loadSettings() {
     const data = await chrome.storage.local.get([
       STORAGE_KEYS.FILTER_ENABLED,
-      STORAGE_KEYS.THRESHOLD
+      STORAGE_KEYS.THRESHOLD,
     ]);
 
     filterEnabled = data[STORAGE_KEYS.FILTER_ENABLED] ?? DEFAULTS.filterEnabled;
     threshold = Number(data[STORAGE_KEYS.THRESHOLD] ?? DEFAULTS.threshold);
 
-    console.log("[YTCF] initial settings:", {
-      filterEnabled,
-      threshold
-    });
+    console.log("[YTCF] initial settings:", { filterEnabled, threshold });
   }
 
   function onPageChanged() {
@@ -144,6 +140,10 @@
         color: #ff8a80;
       }
 
+      .ytcf-placeholder.warning {
+        color: #ffd180;
+      }
+
       .ytcf-score-box {
         position: sticky;
         top: 0;
@@ -180,7 +180,6 @@
 
   function ensureToxicScoreBox() {
     const commentsSection = findCommentsSection();
-
     if (!commentsSection) {
       console.log("[YTCF] comments section not found yet");
       return;
@@ -203,7 +202,7 @@
     toxicScoreBox.innerHTML = `
       <div class="ytcf-score-title">Video Toxicity</div>
       <div id="ytcf-score-value">Analyzing...</div>
-      <div class="ytcf-score-muted" id="ytcf-score-meta"></div>
+      <div id="ytcf-score-meta" class="ytcf-score-muted">No analyzed comments yet</div>
     `;
 
     commentsSection.prepend(toxicScoreBox);
@@ -213,12 +212,10 @@
 
   function updateToxicScoreBox() {
     ensureToxicScoreBox();
-
     if (!toxicScoreBox || !toxicScoreBox.isConnected) return;
 
     const valueEl = toxicScoreBox.querySelector("#ytcf-score-value");
     const metaEl = toxicScoreBox.querySelector("#ytcf-score-meta");
-
     if (!valueEl || !metaEl) return;
 
     if (videoScores.length === 0) {
@@ -254,7 +251,7 @@
 
     observer.observe(document.body, {
       childList: true,
-      subtree: true
+      subtree: true,
     });
   }
 
@@ -285,7 +282,9 @@
       state: "pending",
       score: null,
       queued: false,
-      countedInVideoScore: false
+      countedInVideoScore: false,
+      retryCount: 0,
+      retryTimer: null,
     };
 
     commentMap.set(thread, commentData);
@@ -319,12 +318,12 @@
     placeholder.className = "ytcf-placeholder";
     placeholder.textContent = "Analyzing comment...";
     textEl.insertAdjacentElement("afterend", placeholder);
-
     return placeholder;
   }
 
   function setPendingState(commentData) {
     const { textEl, placeholder } = commentData;
+
     commentData.state = "pending";
 
     if (!filterEnabled) {
@@ -337,28 +336,55 @@
     textEl.classList.remove("ytcf-hidden-text");
 
     placeholder.style.display = "block";
-    placeholder.classList.remove("hidden");
+    placeholder.classList.remove("hidden", "warning");
     placeholder.textContent = "Analyzing comment...";
   }
 
   function setSafeState(commentData) {
     const { textEl, placeholder } = commentData;
-    commentData.state = "safe";
 
+    commentData.state = "safe";
     textEl.classList.remove("ytcf-pending-text", "ytcf-hidden-text");
     placeholder.style.display = "none";
   }
 
   function setHiddenState(commentData) {
     const { textEl, placeholder } = commentData;
-    commentData.state = "hidden";
 
+    commentData.state = "hidden";
     textEl.classList.add("ytcf-hidden-text");
     textEl.classList.remove("ytcf-pending-text");
 
     placeholder.style.display = "block";
+    placeholder.classList.remove("warning");
     placeholder.classList.add("hidden");
     placeholder.textContent = "Filtered comment";
+  }
+
+  function setRetryState(commentData, message) {
+    const { textEl, placeholder } = commentData;
+
+    commentData.state = "retrying";
+    textEl.classList.add("ytcf-pending-text");
+    textEl.classList.remove("ytcf-hidden-text");
+
+    placeholder.style.display = "block";
+    placeholder.classList.remove("hidden");
+    placeholder.classList.add("warning");
+    placeholder.textContent = message || "Server waking up... retrying soon";
+  }
+
+  function setUnknownState(commentData, message) {
+    const { textEl, placeholder } = commentData;
+
+    commentData.state = "unknown";
+    textEl.classList.add("ytcf-pending-text");
+    textEl.classList.remove("ytcf-hidden-text");
+
+    placeholder.style.display = "block";
+    placeholder.classList.remove("hidden");
+    placeholder.classList.add("warning");
+    placeholder.textContent = message || "Could not analyze comment";
   }
 
   function applyScore(commentData, score, allowCount = true) {
@@ -374,7 +400,7 @@
       text: commentData.text,
       score,
       threshold,
-      filterEnabled
+      filterEnabled,
     });
 
     if (!filterEnabled) {
@@ -402,7 +428,13 @@
       }
 
       if (commentData.score == null) {
-        setPendingState(commentData);
+        if (commentData.state === "unknown") {
+          setUnknownState(commentData, "Analysis unavailable");
+        } else if (commentData.state === "retrying") {
+          setRetryState(commentData, "Server waking up... retrying soon");
+        } else {
+          setPendingState(commentData);
+        }
       } else if (commentData.score >= threshold) {
         setHiddenState(commentData);
       } else {
@@ -428,7 +460,6 @@
     if (analyzeQueue.length === 0) return;
 
     const batch = analyzeQueue.splice(0, MAX_BATCH_SIZE);
-
     batch.forEach((item) => {
       item.queued = false;
     });
@@ -438,10 +469,11 @@
 
     for (const item of batch) {
       const cachedScore = getCachedScore(item.text);
+
       if (cachedScore != null) {
         console.log("[YTCF] pre-send cache hit:", {
           text: item.text,
-          score: cachedScore
+          score: cachedScore,
         });
         applyScore(item, cachedScore, true);
       } else {
@@ -478,18 +510,18 @@
         console.log("[YTCF] score result:", {
           text: commentData.text,
           result,
-          score
+          score,
         });
 
         setCachedScore(commentData.text, score);
+        clearRetry(commentData);
         applyScore(commentData, score, true);
       });
     } catch (error) {
       console.error("[YTCF] analyze-batch error:", error);
 
       uncachedItems.forEach((commentData) => {
-        commentData.score = 0;
-        applyScore(commentData, 0, true);
+        handleAnalysisFailure(commentData, error);
       });
     }
 
@@ -498,12 +530,45 @@
     }
   }
 
+  function handleAnalysisFailure(commentData, error) {
+    const delay = RETRY_DELAYS_MS[commentData.retryCount];
+
+    if (delay != null) {
+      commentData.retryCount += 1;
+      setRetryState(
+        commentData,
+        `Server waking up... retry ${commentData.retryCount}/${RETRY_DELAYS_MS.length}`
+      );
+
+      scheduleRetry(commentData, delay);
+      return;
+    }
+
+    setUnknownState(commentData, "Analysis unavailable");
+  }
+
+  function scheduleRetry(commentData, delayMs) {
+    clearRetry(commentData);
+
+    commentData.retryTimer = setTimeout(() => {
+      commentData.retryTimer = null;
+      enqueueComment(commentData);
+    }, delayMs);
+  }
+
+  function clearRetry(commentData) {
+    if (commentData.retryTimer) {
+      clearTimeout(commentData.retryTimer);
+      commentData.retryTimer = null;
+    }
+  }
+
   function sendBatchForAnalysis(texts) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         {
           type: "ANALYZE_COMMENTS_BATCH",
-          comments: texts
+          comments: texts,
         },
         (response) => {
           if (chrome.runtime.lastError) {
@@ -530,17 +595,14 @@
 
   function getCachedScore(text) {
     if (!text) return null;
-
     if (scoreCache.has(text)) {
       return scoreCache.get(text);
     }
-
     return null;
   }
 
   function setCachedScore(text, score) {
     if (!text) return;
-
     scoreCache.set(text, score);
     persistSessionCache();
   }
@@ -569,7 +631,6 @@
   function persistSessionCache() {
     try {
       const entries = Array.from(scoreCache.entries());
-
       const trimmedEntries =
         entries.length > MAX_SESSION_CACHE_ENTRIES
           ? entries.slice(entries.length - MAX_SESSION_CACHE_ENTRIES)
