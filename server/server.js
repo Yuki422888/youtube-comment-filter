@@ -10,20 +10,7 @@ function getEffectiveScoringMode() {
     : "gpt_only";
 }
 
-function normalizeComments(input) {
-  if (!Array.isArray(input)) return [];
-  const normalized = [];
 
-  for (const item of input) {
-    if (typeof item !== "string") continue;
-    const text = normalizeText(item).slice(0, MAX_COMMENT_LENGTH);
-    if (!text) continue;
-    normalized.push(text);
-    if (normalized.length >= MAX_BATCH_SIZE) break;
-  }
-
-  return normalized;
-}
 
 function normalizeText(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
