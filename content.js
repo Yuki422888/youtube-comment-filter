@@ -33,6 +33,12 @@
 
   let toxicScoreBox = null;
   let observer = null;
+  let scanScheduled = false;
+
+  let statusBanner = null;
+  let wakeupTimer = null;
+  let longWaitTimer = null;
+  let activeRequests = 0;
 
   if (window.__YTCF_INITIALIZED__) return;
   window.__YTCF_INITIALIZED__ = true;
@@ -102,6 +108,9 @@
 
     videoScores.length = 0;
 
+    hideStatusBanner(true);
+    activeRequests = 0;
+
     if (toxicScoreBox && toxicScoreBox.isConnected) {
       toxicScoreBox.remove();
     }
@@ -166,6 +175,26 @@
         opacity: 0.85;
         font-size: 12px;
       }
+
+      .ytcf-status-banner {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 2147483647;
+        max-width: 320px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.88);
+        color: #fff;
+        font-size: 13px;
+        line-height: 1.5;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+      }
+
+      .ytcf-status-banner strong {
+        display: block;
+        margin-bottom: 2px;
+      }
     `;
     document.head.appendChild(style);
   }
@@ -181,7 +210,6 @@
   function ensureToxicScoreBox() {
     const commentsSection = findCommentsSection();
     if (!commentsSection) {
-      console.log("[YTCF] comments section not found yet");
       return;
     }
 
@@ -206,7 +234,6 @@
     `;
 
     commentsSection.prepend(toxicScoreBox);
-    console.log("[YTCF] Toxic score box created");
     updateToxicScoreBox();
   }
 
@@ -245,8 +272,14 @@
     if (observer) observer.disconnect();
 
     observer = new MutationObserver(() => {
-      ensureToxicScoreBox();
-      scanComments();
+      if (scanScheduled) return;
+      scanScheduled = true;
+
+      setTimeout(() => {
+        scanScheduled = false;
+        ensureToxicScoreBox();
+        scanComments();
+      }, 150);
     });
 
     observer.observe(document.body, {
@@ -298,7 +331,6 @@
 
     const cachedScore = getCachedScore(text);
     if (cachedScore != null) {
-      console.log("[YTCF] cache hit:", { text, score: cachedScore });
       applyScore(commentData, cachedScore, true);
       return;
     }
@@ -319,6 +351,56 @@
     placeholder.textContent = "Analyzing comment...";
     textEl.insertAdjacentElement("afterend", placeholder);
     return placeholder;
+  }
+
+  function showStatusBanner(title, message) {
+    if (!statusBanner) {
+      statusBanner = document.createElement("div");
+      statusBanner.id = "ytcf-status-banner";
+      statusBanner.className = "ytcf-status-banner";
+      document.body.appendChild(statusBanner);
+    }
+
+    statusBanner.innerHTML = `<strong>${escapeHtml(title)}</strong>${escapeHtml(
+      message
+    )}`;
+  }
+
+  function hideStatusBanner(force = false) {
+    if (wakeupTimer) {
+      clearTimeout(wakeupTimer);
+      wakeupTimer = null;
+    }
+
+    if (longWaitTimer) {
+      clearTimeout(longWaitTimer);
+      longWaitTimer = null;
+    }
+
+    if ((force || activeRequests === 0) && statusBanner) {
+      statusBanner.remove();
+      statusBanner = null;
+    }
+  }
+
+  function startWakeupNotice() {
+    if (activeRequests !== 1) return;
+
+    hideStatusBanner(true);
+
+    wakeupTimer = setTimeout(() => {
+      showStatusBanner(
+        "Preparing comment filter...",
+        "Waking up server. The first check can take a few seconds."
+      );
+    }, 2000);
+
+    longWaitTimer = setTimeout(() => {
+      showStatusBanner(
+        "Still starting up...",
+        "Thanks for waiting. Free hosting can be slow on the first request."
+      );
+    }, 10000);
   }
 
   function setPendingState(commentData) {
@@ -396,13 +478,6 @@
       updateToxicScoreBox();
     }
 
-    console.log("[YTCF] applyScore:", {
-      text: commentData.text,
-      score,
-      threshold,
-      filterEnabled,
-    });
-
     if (!filterEnabled) {
       setSafeState(commentData);
       return;
@@ -471,10 +546,6 @@
       const cachedScore = getCachedScore(item.text);
 
       if (cachedScore != null) {
-        console.log("[YTCF] pre-send cache hit:", {
-          text: item.text,
-          score: cachedScore,
-        });
         applyScore(item, cachedScore, true);
       } else {
         uncachedItems.push(item);
@@ -489,12 +560,8 @@
       return;
     }
 
-    console.log("[YTCF] flushQueue texts:", uncachedTexts);
-
     try {
       const response = await sendBatchForAnalysis(uncachedTexts);
-
-      console.log("[YTCF] batch response:", response);
 
       if (!response || !Array.isArray(response.results)) {
         throw new Error("Invalid analyze-batch response");
@@ -506,12 +573,6 @@
 
         const rawScore = result?.score;
         const score = Number.isFinite(Number(rawScore)) ? Number(rawScore) : 0;
-
-        console.log("[YTCF] score result:", {
-          text: commentData.text,
-          result,
-          score,
-        });
 
         setCachedScore(commentData.text, score);
         clearRetry(commentData);
@@ -544,7 +605,12 @@
       return;
     }
 
-    setUnknownState(commentData, "Analysis unavailable");
+    const message =
+      error && /401|Unauthorized/i.test(String(error.message || error))
+        ? "Authentication failed"
+        : "Analysis unavailable";
+
+    setUnknownState(commentData, message);
   }
 
   function scheduleRetry(commentData, delayMs) {
@@ -564,6 +630,9 @@
   }
 
   function sendBatchForAnalysis(texts) {
+    activeRequests += 1;
+    startWakeupNotice();
+
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
         {
@@ -571,6 +640,11 @@
           comments: texts,
         },
         (response) => {
+          activeRequests = Math.max(0, activeRequests - 1);
+          if (activeRequests === 0) {
+            hideStatusBanner();
+          }
+
           if (chrome.runtime.lastError) {
             console.error("[YTCF] runtime.lastError:", chrome.runtime.lastError);
             reject(new Error(chrome.runtime.lastError.message));
@@ -621,8 +695,6 @@
           scoreCache.set(text, num);
         }
       });
-
-      console.log("[YTCF] restored session cache entries:", scoreCache.size);
     } catch (error) {
       console.warn("[YTCF] failed to restore session cache:", error);
     }
@@ -641,5 +713,14 @@
     } catch (error) {
       console.warn("[YTCF] failed to persist session cache:", error);
     }
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 })();

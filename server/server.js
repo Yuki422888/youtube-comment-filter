@@ -16,6 +16,11 @@ const MAX_COMMENT_LENGTH = 500;
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
+app.use((req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
 function requireExtensionToken(req, res, next) {
   const token = req.header("X-YTCF-Token");
 
@@ -32,21 +37,32 @@ function requireExtensionToken(req, res, next) {
 app.get("/", (_req, res) => {
   res.json({
     success: true,
-    message: "YTCF switchable server is running",
+    message: "YTCF server is running",
+  });
+});
+
+app.get("/healthz", (_req, res) => {
+  res.json({
+    success: true,
+    status: "ok",
+    service: "ytcf-server",
+    hasOpenAIKey: Boolean(OPENAI_API_KEY),
+    hasExtensionToken: Boolean(EXTENSION_SHARED_TOKEN),
+    timestamp: new Date().toISOString(),
   });
 });
 
 app.post("/analyze-batch", requireExtensionToken, async (req, res) => {
+  const comments = normalizeComments(req.body?.comments);
+
+  if (!comments.length) {
+    return res.status(400).json({
+      success: false,
+      error: "comments must be a non-empty array of strings",
+    });
+  }
+
   try {
-    const comments = normalizeComments(req.body?.comments);
-
-    if (!comments.length) {
-      return res.status(400).json({
-        success: false,
-        error: "comments must be a non-empty array of strings",
-      });
-    }
-
     const finalResults = new Array(comments.length).fill(null);
     const aiTargets = [];
 
@@ -66,6 +82,10 @@ app.post("/analyze-batch", requireExtensionToken, async (req, res) => {
     });
 
     if (aiTargets.length > 0) {
+      if (!OPENAI_API_KEY) {
+        throw new Error("OPENAI_API_KEY is not configured");
+      }
+
       const gptResults = await analyzeByGPT(aiTargets);
 
       gptResults.forEach((item) => {
@@ -86,12 +106,11 @@ app.post("/analyze-batch", requireExtensionToken, async (req, res) => {
 
     return res.json({
       success: true,
+      degraded: false,
       results,
     });
   } catch (error) {
-    console.error("[server] analyze-batch error:", error);
-
-    const comments = normalizeComments(req.body?.comments);
+    console.error("[server] analyze-batch error:", error?.message || error);
 
     return res.json({
       success: true,
@@ -152,8 +171,6 @@ async function analyzeByGPT(targets) {
   });
 
   const raw = String(response.output_text || "").trim();
-  console.log("[GPT raw response]:", raw);
-
   const parsed = parseAIResponse(raw);
 
   if (!Array.isArray(parsed)) {
@@ -222,10 +239,7 @@ function parseAIResponse(rawText) {
   try {
     return JSON.parse(cleaned);
   } catch (error) {
-    console.error("JSON parse failed. Raw response was:");
-    console.error(rawText);
-    console.error("Cleaned response was:");
-    console.error(cleaned);
+    console.error("[server] GPT JSON parse failed");
     throw new Error("GPT response JSON parse failed");
   }
 }
