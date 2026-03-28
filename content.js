@@ -16,8 +16,9 @@
   };
 
   const MAX_BATCH_SIZE = 20;
-  const BATCH_DELAY_MS = 500;
+  const BATCH_DELAY_MS = 350;
   const MAX_SESSION_CACHE_ENTRIES = 500;
+  const CACHE_PERSIST_DELAY_MS = 1000;
 
   const RETRY_DELAYS_MS = [5000, 15000, 30000];
 
@@ -29,16 +30,25 @@
 
   const scoreCache = new Map();
   const commentMap = new WeakMap();
-  const videoScores = [];
 
   let toxicScoreBox = null;
   let observer = null;
-  let scanScheduled = false;
 
   let statusBanner = null;
   let wakeupTimer = null;
   let longWaitTimer = null;
   let activeRequests = 0;
+
+  let cachePersistTimer = null;
+  let ensureScoreBoxTimer = null;
+  let pageWatchTimer = null;
+
+  let currentVideoId = "";
+  let lastKnownUrl = location.href;
+
+  let videoScoreSum = 0;
+  let videoScoreCount = 0;
+  let videoHighRiskCount = 0;
 
   if (window.__YTCF_INITIALIZED__) return;
   window.__YTCF_INITIALIZED__ = true;
@@ -49,6 +59,8 @@
     injectStyles();
     restoreSessionCache();
     await loadSettings();
+
+    currentVideoId = getCurrentVideoId();
     ensureToxicScoreBox();
     startObserver();
     scanComments();
@@ -78,15 +90,7 @@
       }
     });
 
-    let lastUrl = location.href;
-    setInterval(() => {
-      if (location.href !== lastUrl) {
-        lastUrl = location.href;
-        onPageChanged();
-      } else {
-        ensureToxicScoreBox();
-      }
-    }, 1000);
+    startPageWatcher();
   }
 
   async function loadSettings() {
@@ -101,12 +105,40 @@
     console.log("[YTCF] initial settings:", { filterEnabled, threshold });
   }
 
+  function startPageWatcher() {
+    if (pageWatchTimer) {
+      clearInterval(pageWatchTimer);
+    }
+
+    pageWatchTimer = setInterval(() => {
+      const currentUrl = location.href;
+      const videoId = getCurrentVideoId();
+
+      if (currentUrl !== lastKnownUrl || videoId !== currentVideoId) {
+        lastKnownUrl = currentUrl;
+        currentVideoId = videoId;
+        onPageChanged();
+        return;
+      }
+
+      scheduleEnsureToxicScoreBox();
+    }, 1500);
+  }
+
+  function getCurrentVideoId() {
+    try {
+      return new URL(location.href).searchParams.get("v") || "";
+    } catch {
+      return "";
+    }
+  }
+
   function onPageChanged() {
     analyzeQueue = [];
     clearTimeout(queueTimer);
     queueTimer = null;
 
-    videoScores.length = 0;
+    resetVideoScoreStats();
 
     hideStatusBanner(true);
     activeRequests = 0;
@@ -120,7 +152,7 @@
       delete thread.dataset.ytcfInitialized;
     });
 
-    ensureToxicScoreBox();
+    scheduleEnsureToxicScoreBox();
     scanComments();
   }
 
@@ -207,6 +239,15 @@
     );
   }
 
+  function scheduleEnsureToxicScoreBox() {
+    if (ensureScoreBoxTimer) return;
+
+    ensureScoreBoxTimer = setTimeout(() => {
+      ensureScoreBoxTimer = null;
+      ensureToxicScoreBox();
+    }, 100);
+  }
+
   function ensureToxicScoreBox() {
     const commentsSection = findCommentsSection();
     if (!commentsSection) {
@@ -237,6 +278,12 @@
     updateToxicScoreBox();
   }
 
+  function resetVideoScoreStats() {
+    videoScoreSum = 0;
+    videoScoreCount = 0;
+    videoHighRiskCount = 0;
+  }
+
   function updateToxicScoreBox() {
     ensureToxicScoreBox();
     if (!toxicScoreBox || !toxicScoreBox.isConnected) return;
@@ -245,18 +292,17 @@
     const metaEl = toxicScoreBox.querySelector("#ytcf-score-meta");
     if (!valueEl || !metaEl) return;
 
-    if (videoScores.length === 0) {
+    if (videoScoreCount === 0) {
       valueEl.textContent = "Analyzing...";
       metaEl.textContent = "No analyzed comments yet";
       return;
     }
 
-    const avg = videoScores.reduce((sum, s) => sum + s, 0) / videoScores.length;
-    const highRiskCount = videoScores.filter((s) => s >= threshold).length;
-    const ratio = Math.round((highRiskCount / videoScores.length) * 100);
+    const avg = videoScoreSum / videoScoreCount;
+    const ratio = Math.round((videoHighRiskCount / videoScoreCount) * 100);
 
     valueEl.textContent = `${avg.toFixed(2)} (${getRiskLabel(avg)})`;
-    metaEl.textContent = `Analyzed: ${videoScores.length} comments | Toxic(>=${threshold.toFixed(
+    metaEl.textContent = `Analyzed: ${videoScoreCount} comments | Toxic(>=${threshold.toFixed(
       2
     )}): ${ratio}%`;
   }
@@ -271,15 +317,36 @@
   function startObserver() {
     if (observer) observer.disconnect();
 
-    observer = new MutationObserver(() => {
-      if (scanScheduled) return;
-      scanScheduled = true;
+    observer = new MutationObserver((mutations) => {
+      let sawPossibleCommentAreaChange = false;
 
-      setTimeout(() => {
-        scanScheduled = false;
-        ensureToxicScoreBox();
-        scanComments();
-      }, 150);
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (!(node instanceof HTMLElement)) continue;
+
+          if (node.matches?.("ytd-comment-thread-renderer")) {
+            processCommentThread(node);
+            sawPossibleCommentAreaChange = true;
+          }
+
+          const nestedThreads = node.querySelectorAll?.("ytd-comment-thread-renderer");
+          if (nestedThreads && nestedThreads.length > 0) {
+            nestedThreads.forEach((thread) => processCommentThread(thread));
+            sawPossibleCommentAreaChange = true;
+          }
+
+          if (
+            node.id === "comments" ||
+            node.matches?.("ytd-comments, ytd-comments#comments")
+          ) {
+            sawPossibleCommentAreaChange = true;
+          }
+        }
+      }
+
+      if (sawPossibleCommentAreaChange) {
+        scheduleEnsureToxicScoreBox();
+      }
     });
 
     observer.observe(document.body, {
@@ -302,7 +369,8 @@
     const textEl = thread.querySelector("#content-text");
     if (!textEl) return;
 
-    const text = normalizeText(textEl.innerText || textEl.textContent || "");
+    const rawText = textEl.textContent || "";
+    const text = normalizeText(rawText);
     if (!text) return;
 
     const placeholder = ensurePlaceholder(thread, textEl);
@@ -339,7 +407,7 @@
   }
 
   function normalizeText(text) {
-    return text.replace(/\s+/g, " ").trim();
+    return String(text || "").replace(/\s+/g, " ").trim();
   }
 
   function ensurePlaceholder(thread, textEl) {
@@ -473,7 +541,11 @@
     commentData.score = score;
 
     if (allowCount && !commentData.countedInVideoScore) {
-      videoScores.push(score);
+      videoScoreSum += score;
+      videoScoreCount += 1;
+      if (score >= threshold) {
+        videoHighRiskCount += 1;
+      }
       commentData.countedInVideoScore = true;
       updateToxicScoreBox();
     }
@@ -493,9 +565,21 @@
   function reapplyAllCommentStates() {
     const threads = document.querySelectorAll("ytd-comment-thread-renderer");
 
+    let recomputedSum = 0;
+    let recomputedCount = 0;
+    let recomputedHighRiskCount = 0;
+
     threads.forEach((thread) => {
       const commentData = commentMap.get(thread);
       if (!commentData) return;
+
+      if (commentData.score != null) {
+        recomputedSum += commentData.score;
+        recomputedCount += 1;
+        if (commentData.score >= threshold) {
+          recomputedHighRiskCount += 1;
+        }
+      }
 
       if (!filterEnabled) {
         setSafeState(commentData);
@@ -516,10 +600,14 @@
         setSafeState(commentData);
       }
     });
+
+    videoScoreSum = recomputedSum;
+    videoScoreCount = recomputedCount;
+    videoHighRiskCount = recomputedHighRiskCount;
   }
 
   function enqueueComment(commentData) {
-    if (commentData.queued || commentData.score != null) return;
+    if (!commentData || commentData.queued || commentData.score != null) return;
 
     commentData.queued = true;
     analyzeQueue.push(commentData);
@@ -567,6 +655,8 @@
         throw new Error("Invalid analyze-batch response");
       }
 
+      let didUpdateCache = false;
+
       response.results.forEach((result, index) => {
         const commentData = uncachedItems[index];
         if (!commentData) return;
@@ -574,10 +664,16 @@
         const rawScore = result?.score;
         const score = Number.isFinite(Number(rawScore)) ? Number(rawScore) : 0;
 
-        setCachedScore(commentData.text, score);
+        setCachedScore(commentData.text, score, false);
+        didUpdateCache = true;
+
         clearRetry(commentData);
         applyScore(commentData, score, true);
       });
+
+      if (didUpdateCache) {
+        schedulePersistSessionCache();
+      }
     } catch (error) {
       console.error("[YTCF] analyze-batch error:", error);
 
@@ -675,10 +771,13 @@
     return null;
   }
 
-  function setCachedScore(text, score) {
+  function setCachedScore(text, score, persistNow = true) {
     if (!text) return;
     scoreCache.set(text, score);
-    persistSessionCache();
+
+    if (persistNow) {
+      schedulePersistSessionCache();
+    }
   }
 
   function restoreSessionCache() {
@@ -698,6 +797,15 @@
     } catch (error) {
       console.warn("[YTCF] failed to restore session cache:", error);
     }
+  }
+
+  function schedulePersistSessionCache() {
+    if (cachePersistTimer) return;
+
+    cachePersistTimer = setTimeout(() => {
+      cachePersistTimer = null;
+      persistSessionCache();
+    }, CACHE_PERSIST_DELAY_MS);
   }
 
   function persistSessionCache() {

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "YouTube Toxic Comment Filter",
   "description": "Automatically hide toxic comments on YouTube using AI.",
-  "version": "1.0.1",
+  "version": "1.0.2",
 
   "permissions": ["storage"],
 
