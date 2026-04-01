@@ -308,11 +308,11 @@
   }
 
   function getRiskLabel(score) {
-    if (score < 0.2) return "Healthy";
-    if (score < 0.35) return "Slightly Toxic";
-    if (score < 0.5) return "Toxic";
-    return "Dangerous";
-  }
+  　if (score < 0.15) return "Healthy";
+  　if (score < 0.25) return "Caution";
+  　if (score < 0.35) return "Toxic";
+  　return "High Risk";
+　}
 
   function startObserver() {
     if (observer) observer.disconnect();
@@ -362,64 +362,67 @@
     });
   }
 
-  function processCommentThread(thread) {
-    if (!thread) return;
-    if (thread.dataset.ytcfInitialized === "true") return;
+ function processCommentThread(thread) {
+  if (!thread) return;
+  if (thread.dataset.ytcfInitialized === "true") return;
 
-    const textEl = thread.querySelector("#content-text");
-    if (!textEl) return;
+  const textEl = thread.querySelector("#content-text");
+  if (!textEl) return;
 
-    const rawText = textEl.textContent || "";
-    const text = normalizeText(rawText);
-    if (!text) return;
+  const rawText = textEl.textContent || "";
+  const text = normalizeText(rawText);
+  if (!text) return;
 
-    const placeholder = ensurePlaceholder(thread, textEl);
+  const placeholder = ensurePlaceholder(thread, textEl);
+  if (!placeholder) return;
 
-    const commentData = {
-      thread,
-      textEl,
-      placeholder,
-      text,
-      state: "pending",
-      score: null,
-      queued: false,
-      countedInVideoScore: false,
-      retryCount: 0,
-      retryTimer: null,
-    };
+  const commentData = {
+    thread,
+    textEl,
+    placeholder,
+    text,
+    state: "pending",
+    score: null,
+    queued: false,
+    countedInVideoScore: false,
+    retryCount: 0,
+    retryTimer: null,
+  };
 
-    commentMap.set(thread, commentData);
-    thread.dataset.ytcfInitialized = "true";
+  commentMap.set(thread, commentData);
+  thread.dataset.ytcfInitialized = "true";
 
-    if (filterEnabled) {
-      setPendingState(commentData);
-    } else {
-      setSafeState(commentData);
-    }
-
-    const cachedScore = getCachedScore(text);
-    if (cachedScore != null) {
-      applyScore(commentData, cachedScore, true);
-      return;
-    }
-
-    enqueueComment(commentData);
+  if (filterEnabled) {
+    setPendingState(commentData);
+  } else {
+    setSafeState(commentData);
   }
+
+  const cachedScore = getCachedScore(text);
+  if (cachedScore != null) {
+    applyScore(commentData, cachedScore, true);
+    return;
+  }
+
+  enqueueComment(commentData);
+}
 
   function normalizeText(text) {
     return String(text || "").replace(/\s+/g, " ").trim();
   }
 
   function ensurePlaceholder(thread, textEl) {
-    let placeholder = thread.querySelector(".ytcf-placeholder");
-    if (placeholder) return placeholder;
+  　if (!thread || !textEl) return null;
 
-    placeholder = document.createElement("div");
-    placeholder.className = "ytcf-placeholder";
-    placeholder.textContent = "Analyzing comment...";
-    textEl.insertAdjacentElement("afterend", placeholder);
-    return placeholder;
-  }
+  　let placeholder = thread.querySelector(".ytcf-placeholder");
+  　if (placeholder) return placeholder;
+
+  　placeholder = document.createElement("div");
+  　placeholder.className = "ytcf-placeholder";
+  　placeholder.textContent = "Checking comment...";
+  　textEl.insertAdjacentElement("afterend", placeholder);
+  　return placeholder;
+　}
 
   function showStatusBanner(title, message) {
     if (!statusBanner) {
@@ -452,43 +455,42 @@
   }
 
   function startWakeupNotice() {
-    if (activeRequests !== 1) return;
+  　if (activeRequests !== 1) return;
 
-    hideStatusBanner(true);
+  　hideStatusBanner(true);
 
-    wakeupTimer = setTimeout(() => {
-      showStatusBanner(
-        "Preparing comment filter...",
-        "Waking up server. The first check can take a few seconds."
-      );
-    }, 2000);
+  　wakeupTimer = setTimeout(() => {
+    　showStatusBanner(
+      　"Preparing comment filter...",
+      　"The server may be waking up. The first check can take a few seconds."
+    　);
+  　}, 2000);
 
-    longWaitTimer = setTimeout(() => {
-      showStatusBanner(
-        "Still starting up...",
-        "Thanks for waiting. Free hosting can be slow on the first request."
-      );
-    }, 10000);
-  }
+  　longWaitTimer = setTimeout(() => {
+    　showStatusBanner(
+      　"Still checking comments...",
+      　"Thanks for waiting. Free hosting can be slower on the first request."
+    　);
+  　}, 10000);
+　}
 
-  function setPendingState(commentData) {
-    const { textEl, placeholder } = commentData;
+　function setPendingState(commentData) {
+  　const { textEl, placeholder } = commentData;
+  　commentData.state = "pending";
 
-    commentData.state = "pending";
+  　if (!filterEnabled) {
+    　textEl.classList.remove("ytcf-pending-text", "ytcf-hidden-text");
+    　placeholder.style.display = "none";
+    　return;
+  　}
 
-    if (!filterEnabled) {
-      textEl.classList.remove("ytcf-pending-text", "ytcf-hidden-text");
-      placeholder.style.display = "none";
-      return;
-    }
+  　textEl.classList.add("ytcf-pending-text");
+  　textEl.classList.remove("ytcf-hidden-text");
 
-    textEl.classList.add("ytcf-pending-text");
-    textEl.classList.remove("ytcf-hidden-text");
-
-    placeholder.style.display = "block";
-    placeholder.classList.remove("hidden", "warning");
-    placeholder.textContent = "Analyzing comment...";
-  }
+  　placeholder.style.display = "block";
+  　placeholder.classList.remove("hidden", "warning");
+  　placeholder.textContent = "Checking comment...";
+　}
 
   function setSafeState(commentData) {
     const { textEl, placeholder } = commentData;
@@ -512,17 +514,17 @@
   }
 
   function setRetryState(commentData, message) {
-    const { textEl, placeholder } = commentData;
+  　const { textEl, placeholder } = commentData;
+  　commentData.state = "retrying";
 
-    commentData.state = "retrying";
-    textEl.classList.add("ytcf-pending-text");
-    textEl.classList.remove("ytcf-hidden-text");
+  　textEl.classList.add("ytcf-pending-text");
+  　textEl.classList.remove("ytcf-hidden-text");
 
-    placeholder.style.display = "block";
-    placeholder.classList.remove("hidden");
-    placeholder.classList.add("warning");
-    placeholder.textContent = message || "Server waking up... retrying soon";
-  }
+  　placeholder.style.display = "block";
+  　placeholder.classList.remove("hidden");
+  　placeholder.classList.add("warning");
+  　placeholder.textContent = message || "Still checking comment...";
+　}
 
   function setUnknownState(commentData, message) {
     const { textEl, placeholder } = commentData;
