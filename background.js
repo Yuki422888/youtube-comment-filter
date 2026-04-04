@@ -16,7 +16,7 @@ const CONFIG = {
     API_BASE_URL: "https://youtube-comment-filter-server.onrender.com",
     // 本番値は GitHub に載せないこと
     // ストア提出用ZIPを作る直前にローカルで差し込む運用を推奨
-    EXTENSION_SHARED_TOKEN: "SET_YOUR_TOKEN",
+    EXTENSION_SHARED_TOKEN: "set_my_token",
     DEBUG: false,
   },
 };

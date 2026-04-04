@@ -157,79 +157,121 @@
   }
 
   function injectStyles() {
-    if (document.getElementById("ytcf-styles")) return;
+   if (document.getElementById("ytcf-styles")) return;
 
-    const style = document.createElement("style");
-    style.id = "ytcf-styles";
-    style.textContent = `
-      .ytcf-pending-text {
-        display: none !important;
-      }
+   const style = document.createElement("style");
+   style.id = "ytcf-styles";
+   style.textContent = `
+     .ytcf-pending-text {
+       display: none !important;
+     }
 
-      .ytcf-hidden-text {
-        display: none !important;
-      }
+     .ytcf-hidden-text {
+       display: none !important;
+     }
 
-      .ytcf-placeholder {
-        font-size: 12px;
-        color: #888;
-        margin-top: 4px;
-        line-height: 1.4;
-      }
+     .ytcf-placeholder {
+       font-size: 12px;
+       color: #888;
+       margin-top: 4px;
+       line-height: 1.4;
+     }
 
-      .ytcf-placeholder.hidden {
-        color: #ff8a80;
-      }
+     .ytcf-placeholder.hidden {
+       color: #ff8a80;
+     }
 
-      .ytcf-placeholder.warning {
-        color: #ffd180;
-      }
+     .ytcf-placeholder.warning {
+       color: #ffd180;
+     }
 
-      .ytcf-score-box {
-        position: sticky;
-        top: 0;
-        z-index: 9999;
-        margin: 12px 0;
-        padding: 10px 12px;
-        border-radius: 10px;
-        background: rgba(0, 0, 0, 0.75);
-        color: #fff;
-        font-size: 13px;
-        line-height: 1.5;
-      }
+     .ytcf-score-box {
+       position: sticky;
+       top: 0;
+       z-index: 9999;
+       margin: 12px 0;
+       padding: 12px 14px;
+       border-radius: 12px;
+       background: rgba(0, 0, 0, 0.78);
+       color: #fff;
+       font-size: 13px;
+       line-height: 1.5;
+       backdrop-filter: blur(6px);
+     }
 
-      .ytcf-score-title {
-        font-weight: bold;
-        margin-bottom: 6px;
-      }
+     .ytcf-score-title {
+       font-weight: 700;
+       margin-bottom: 8px;
+       font-size: 12px;
+       letter-spacing: 0.02em;
+       opacity: 0.9;
+     }
 
-      .ytcf-score-muted {
-        opacity: 0.85;
-        font-size: 12px;
-      }
+     .ytcf-score-badge {
+       display: inline-flex;
+       align-items: center;
+       gap: 6px;
+       padding: 6px 10px;
+       border-radius: 999px;
+       font-size: 14px;
+       font-weight: 700;
+       line-height: 1.2;
+       margin-bottom: 8px;
+     }
 
-      .ytcf-status-banner {
-        position: fixed;
-        top: 16px;
-        right: 16px;
-        z-index: 2147483647;
-        max-width: 320px;
-        padding: 10px 14px;
-        border-radius: 10px;
-        background: rgba(0, 0, 0, 0.88);
-        color: #fff;
-        font-size: 13px;
-        line-height: 1.5;
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
-      }
+     .ytcf-score-badge.safe {
+       background: rgba(76, 175, 80, 0.22);
+       color: #b9f6ca;
+     }
 
-      .ytcf-status-banner strong {
-        display: block;
-        margin-bottom: 2px;
-      }
-    `;
-    document.head.appendChild(style);
-  }
+     .ytcf-score-badge.caution {
+       background: rgba(255, 235, 59, 0.18);
+       color: #fff59d;
+     }
+
+     .ytcf-score-badge.risky {
+       background: rgba(255, 152, 0, 0.20);
+       color: #ffd180;
+     }
+
+     .ytcf-score-badge.danger {
+       background: rgba(244, 67, 54, 0.22);
+       color: #ffab91;
+     }
+
+     .ytcf-score-summary {
+       font-size: 14px;
+       font-weight: 600;
+       margin-bottom: 4px;
+     }
+
+     .ytcf-score-meta {
+       opacity: 0.85;
+       font-size: 12px;
+     }
+
+     .ytcf-status-banner {
+       position: fixed;
+       top: 16px;
+       right: 16px;
+       z-index: 2147483647;
+       max-width: 320px;
+       padding: 10px 14px;
+       border-radius: 10px;
+       background: rgba(0, 0, 0, 0.88);
+       color: #fff;
+       font-size: 13px;
+       line-height: 1.5;
+       box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+     }
+
+     .ytcf-status-banner strong {
+       display: block;
+       margin-bottom: 2px;
+     }
+   `;
+   document.head.appendChild(style);
+ }
 
   function findCommentsSection() {
     return (
@@ -249,34 +291,34 @@
   }
 
   function ensureToxicScoreBox() {
-    const commentsSection = findCommentsSection();
-    if (!commentsSection) {
-      return;
-    }
+   const commentsSection = findCommentsSection();
+   if (!commentsSection) {
+     return;
+   }
 
-    if (toxicScoreBox && toxicScoreBox.isConnected) {
-      return;
-    }
+   if (toxicScoreBox && toxicScoreBox.isConnected) {
+     return;
+   }
 
-    const existing = document.getElementById("ytcf-score-box");
-    if (existing) {
-      toxicScoreBox = existing;
-      updateToxicScoreBox();
-      return;
-    }
+   const existing = document.getElementById("ytcf-score-box");
+   if (existing) {
+     toxicScoreBox = existing;
+     updateToxicScoreBox();
+     return;
+   }
 
-    toxicScoreBox = document.createElement("div");
-    toxicScoreBox.id = "ytcf-score-box";
-    toxicScoreBox.className = "ytcf-score-box";
-    toxicScoreBox.innerHTML = `
-      <div class="ytcf-score-title">Video Toxicity</div>
-      <div id="ytcf-score-value">Analyzing...</div>
-      <div id="ytcf-score-meta" class="ytcf-score-muted">No analyzed comments yet</div>
-    `;
+   toxicScoreBox = document.createElement("div");
+   toxicScoreBox.id = "ytcf-score-box";
+   toxicScoreBox.className = "ytcf-score-box";
+   toxicScoreBox.innerHTML = `
+     <div class="ytcf-score-title">Comment Safety</div>
+     <div id="ytcf-score-value" class="ytcf-score-summary">Checking comments...</div>
+     <div id="ytcf-score-meta" class="ytcf-score-meta">No analyzed comments yet</div>
+   `;
 
-    commentsSection.prepend(toxicScoreBox);
-    updateToxicScoreBox();
-  }
+   commentsSection.prepend(toxicScoreBox);
+   updateToxicScoreBox();
+ }
 
   function resetVideoScoreStats() {
     videoScoreSum = 0;
@@ -285,34 +327,68 @@
   }
 
   function updateToxicScoreBox() {
-    ensureToxicScoreBox();
-    if (!toxicScoreBox || !toxicScoreBox.isConnected) return;
+   ensureToxicScoreBox();
+   if (!toxicScoreBox || !toxicScoreBox.isConnected) return;
 
-    const valueEl = toxicScoreBox.querySelector("#ytcf-score-value");
-    const metaEl = toxicScoreBox.querySelector("#ytcf-score-meta");
-    if (!valueEl || !metaEl) return;
+   const valueEl = toxicScoreBox.querySelector("#ytcf-score-value");
+   const metaEl = toxicScoreBox.querySelector("#ytcf-score-meta");
+   if (!valueEl || !metaEl) return;
 
-    if (videoScoreCount === 0) {
-      valueEl.textContent = "Analyzing...";
-      metaEl.textContent = "No analyzed comments yet";
-      return;
-    }
+   if (videoScoreCount === 0) {
+     valueEl.textContent = "Checking comments...";
+     metaEl.textContent = "No analyzed comments yet";
+     return;
+   }
 
-    const avg = videoScoreSum / videoScoreCount;
-    const ratio = Math.round((videoHighRiskCount / videoScoreCount) * 100);
+   const avg = videoScoreSum / videoScoreCount;
+   const toxicPercent = Math.round((videoHighRiskCount / videoScoreCount) * 100);
+   const risk = getRiskLabel(avg, toxicPercent);
 
-    valueEl.textContent = `${avg.toFixed(2)} (${getRiskLabel(avg)})`;
-    metaEl.textContent = `Analyzed: ${videoScoreCount} comments | Toxic(>=${threshold.toFixed(
-      2
-    )}): ${ratio}%`;
-  }
+   valueEl.innerHTML = `
+     <div class="ytcf-score-badge ${risk.tone}">
+       <span>${risk.emoji}</span>
+       <span>${risk.text}</span>
+     </div>
+     <div class="ytcf-score-summary">
+       ${toxicPercent}% of checked comments were flagged
+     </div>
+   `;
 
-  function getRiskLabel(score) {
-  　if (score < 0.15) return "Healthy";
-  　if (score < 0.25) return "Caution";
-  　if (score < 0.35) return "Toxic";
-  　return "High Risk";
-　}
+   metaEl.textContent =
+     `Checked: ${videoScoreCount} comments · Avg score: ${avg.toFixed(2)} · Threshold:    ${threshold.toFixed(2)}`;
+ }
+
+  function getRiskLabel(avgScore, toxicPercent) {
+   if (toxicPercent >= 40 || avgScore >= 0.50) {
+     return {
+       emoji: "🔴",
+       text: "Dangerous discussion",
+       tone: "danger",
+     };
+   }
+
+   if (toxicPercent >= 25 || avgScore >= 0.35) {
+     return {
+       emoji: "🟠",
+       text: "Risky discussion",
+       tone: "risky",
+     };
+   }
+
+   if (toxicPercent >= 10 || avgScore >= 0.20) {
+     return {
+       emoji: "🟡",
+       text: "Use caution",
+       tone: "caution",
+     };
+   }
+
+   return {
+     emoji: "🟢",
+     text: "Mostly safe",
+     tone: "safe",
+   };
+ }
 
   function startObserver() {
     if (observer) observer.disconnect();
@@ -419,7 +495,7 @@
 
   　placeholder = document.createElement("div");
   　placeholder.className = "ytcf-placeholder";
-  　placeholder.textContent = "Checking comment...";
+    placeholder.textContent = "Checking comment safety...";
   　textEl.insertAdjacentElement("afterend", placeholder);
   　return placeholder;
 　}
