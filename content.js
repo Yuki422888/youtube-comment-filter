@@ -250,6 +250,17 @@
        font-size: 12px;
      }
 
+     .ytcf-score-tip {
+        display: none;
+        margin-top: 10px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #f5f5f5;
+        font-size: 12px;
+        line-height: 1.45;
+     }
+
      .ytcf-status-banner {
        position: fixed;
        top: 16px;
@@ -314,6 +325,7 @@
      <div class="ytcf-score-title">Comment Safety</div>
      <div id="ytcf-score-value" class="ytcf-score-summary">Checking comments...</div>
      <div id="ytcf-score-meta" class="ytcf-score-meta">No analyzed comments yet</div>
+     <div id="ytcf-score-tip" class="ytcf-score-tip"></div>
    `;
 
    commentsSection.prepend(toxicScoreBox);
@@ -324,41 +336,65 @@
     videoScoreSum = 0;
     videoScoreCount = 0;
     videoHighRiskCount = 0;
-  }
+    }
 
-  function updateToxicScoreBox() {
-   ensureToxicScoreBox();
-   if (!toxicScoreBox || !toxicScoreBox.isConnected) return;
+    function getFilteredCommentCount() {
+        let count = 0;
 
-   const valueEl = toxicScoreBox.querySelector("#ytcf-score-value");
-   const metaEl = toxicScoreBox.querySelector("#ytcf-score-meta");
-   if (!valueEl || !metaEl) return;
+        document.querySelectorAll("ytd-comment-thread-renderer").forEach((thread) => {
+            const commentData = commentMap.get(thread);
+            if (!commentData) return;
+            if (commentData.score == null) return;
+            if (commentData.score >= threshold) count += 1;
+        });
 
-   if (videoScoreCount === 0) {
-     valueEl.textContent = "Checking comments...";
-     metaEl.textContent = "No analyzed comments yet";
-     return;
-   }
+        return count;
+    }
 
-   const avg = videoScoreSum / videoScoreCount;
-   const toxicPercent = Math.round((videoHighRiskCount / videoScoreCount) * 100);
-   const risk = getRiskLabel(avg, toxicPercent);
+    function updateToxicScoreBox() {
+        ensureToxicScoreBox();
+        if (!toxicScoreBox || !toxicScoreBox.isConnected) return;
 
-   valueEl.innerHTML = `
-     <div class="ytcf-score-badge ${risk.tone}">
-       <span>${risk.emoji}</span>
-       <span>${risk.text}</span>
-     </div>
-     <div class="ytcf-score-summary">
-       ${toxicPercent}% of checked comments were flagged
-     </div>
-   `;
+        const valueEl = toxicScoreBox.querySelector("#ytcf-score-value");
+        const metaEl = toxicScoreBox.querySelector("#ytcf-score-meta");
+        const tipEl = toxicScoreBox.querySelector("#ytcf-score-tip");
 
-   metaEl.textContent =
-     `Checked: ${videoScoreCount} comments · Avg score: ${avg.toFixed(2)} · Threshold:    ${threshold.toFixed(2)}`;
- }
+        if (!valueEl || !metaEl || !tipEl) return;
 
-  function getRiskLabel(avgScore, toxicPercent) {
+        if (videoScoreCount === 0) {
+            valueEl.textContent = "Checking comments...";
+            metaEl.textContent = "No analyzed comments yet";
+            tipEl.style.display = "none";
+            tipEl.textContent = "";
+            return;
+        }
+
+        const avg = videoScoreSum / videoScoreCount;
+        const toxicPercent = Math.round((videoHighRiskCount / videoScoreCount) * 100);
+        const risk = getRiskLabel(avg, toxicPercent);
+
+        valueEl.innerHTML = `
+        <div class="ytcf-score-badge ${risk.tone}">${risk.emoji} ${risk.text}</div>
+        <div class="ytcf-score-summary">${toxicPercent}% of checked comments were flagged</div>
+    `;
+
+        metaEl.textContent =
+            `Checked: ${videoScoreCount} comments · Avg score: ${avg.toFixed(2)} · Threshold: ${threshold.toFixed(2)}`;
+
+        const filteredCount = getFilteredCommentCount();
+
+        if (filterEnabled && filteredCount > 0) {
+            tipEl.style.display = "block";
+            tipEl.textContent =
+                `Filtered ${filteredCount} comment${filteredCount === 1 ? "" : "s"}. ` +
+                `Click the extension icon (top-right → puzzle icon 🧩) to adjust Filter Strength.`;
+        } else {
+            tipEl.style.display = "none";
+            tipEl.textContent = "";
+        }
+    }
+
+ function getRiskLabel(avgScore, toxicPercent) {
    if (toxicPercent >= 40 || avgScore >= 0.50) {
      return {
        emoji: "🔴",

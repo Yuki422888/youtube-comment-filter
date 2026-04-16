@@ -1,38 +1,50 @@
 import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
+import rateLimit from "express-rate-limit";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const EXTENSION_SHARED_TOKEN = process.env.EXTENSION_SHARED_TOKEN || "";
 
 const client = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 const MAX_BATCH_SIZE = 20;
 const MAX_COMMENT_LENGTH = 500;
 
-app.use(cors());
+const ALLOWED_ORIGINS = [
+    "chrome-extension://YOUR_EXTENSION_ID",
+];
+
+app.use(
+    cors({
+        origin(origin, callback) {
+            if (!origin) return callback(null, true);
+            if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+            return callback(new Error("Not allowed by CORS"));
+        },
+    })
+);
 app.use(express.json({ limit: "1mb" }));
+
+const analyzeBatchLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+        success: false,
+        error: "Too many requests. Please try again shortly.",
+    },
+});
 
 app.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   next();
 });
 
-function requireExtensionToken(req, res, next) {
-  const token = req.header("X-YTCF-Token");
 
-  if (!token || token !== EXTENSION_SHARED_TOKEN) {
-    return res.status(401).json({
-      success: false,
-      error: "Unauthorized request",
-    });
-  }
-
-  next();
-}
 
 app.get("/", (_req, res) => {
   res.json({
@@ -47,12 +59,11 @@ app.get("/healthz", (_req, res) => {
     status: "ok",
     service: "ytcf-server",
     hasOpenAIKey: Boolean(OPENAI_API_KEY),
-    hasExtensionToken: Boolean(EXTENSION_SHARED_TOKEN),
     timestamp: new Date().toISOString(),
   });
 });
 
-app.post("/analyze-batch", requireExtensionToken, async (req, res) => {
+app.post("/analyze-batch", analyzeBatchLimiter, async (req, res) => {
   const comments = normalizeComments(req.body?.comments);
 
   if (!comments.length) {

@@ -9,14 +9,10 @@ const CURRENT_ENV = ENV.PRODUCTION;
 const CONFIG = {
   [ENV.LOCAL]: {
     API_BASE_URL: "http://localhost:3000",
-    EXTENSION_SHARED_TOKEN: "local_dev_token_change_me",
     DEBUG: true,
   },
   [ENV.PRODUCTION]: {
     API_BASE_URL: "https://youtube-comment-filter-server.onrender.com",
-    // 本番値は GitHub に載せないこと
-    // ストア提出用ZIPを作る直前にローカルで差し込む運用を推奨
-    EXTENSION_SHARED_TOKEN: "set_my_token",
     DEBUG: false,
   },
 };
@@ -116,27 +112,13 @@ function normalizeComment(value) {
 }
 
 function validateConfig(config) {
-  if (!config || typeof config !== "object") {
-    throw new Error("Invalid extension config");
-  }
+    if (!config || typeof config !== "object") {
+        throw new Error("Invalid extension config");
+    }
 
-  if (!config.API_BASE_URL || typeof config.API_BASE_URL !== "string") {
-    throw new Error("API_BASE_URL is not configured");
-  }
-
-  if (
-    !config.EXTENSION_SHARED_TOKEN ||
-    typeof config.EXTENSION_SHARED_TOKEN !== "string"
-  ) {
-    throw new Error("EXTENSION_SHARED_TOKEN is not configured");
-  }
-
-  if (
-    CURRENT_ENV === ENV.PRODUCTION &&
-    config.EXTENSION_SHARED_TOKEN === "__SET_PRODUCTION_TOKEN_LOCALLY__"
-  ) {
-    throw new Error("Production token is not set");
-  }
+    if (!config.API_BASE_URL || typeof config.API_BASE_URL !== "string") {
+        throw new Error("API_BASE_URL is not configured");
+    }
 }
 
 async function postAnalyzeBatchWithCache(comments) {
@@ -180,14 +162,13 @@ async function postAnalyzeBatch(comments) {
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const { API_BASE_URL, EXTENSION_SHARED_TOKEN } = getConfig();
+    const { API_BASE_URL } = getConfig();
     const url = `${API_BASE_URL}/analyze-batch`;
 
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-YTCF-Token": EXTENSION_SHARED_TOKEN,
       },
       body: JSON.stringify({ comments }),
       signal: controller.signal,
