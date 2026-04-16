@@ -50,7 +50,7 @@ const corsOptions = {
     optionsSuccessStatus: 204,
 };
 
-aapp.use((req, _res, next) => {
+app.use((req, _res, next) => {
     console.log("[req]", {
         method: req.method,
         path: req.path,
