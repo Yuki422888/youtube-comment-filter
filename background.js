@@ -67,7 +67,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       debugLog("API_BASE_URL =", config.API_BASE_URL);
       debugLog("received batch size =", comments.length);
 
-      const data = await postAnalyzeBatchWithCache(comments);
+      const data = await postAnalyzeBatch(comments);
 
       if (!data || data.success !== true || !Array.isArray(data.results)) {
         throw new Error("Invalid server response format");
@@ -127,9 +127,8 @@ async function postAnalyzeBatch(comments) {
 
     try {
         const { API_BASE_URL } = getConfig();
-        const url = `${API_BASE_URL}/analyze-batch`;
 
-        const response = await fetch(url, {
+        const response = await fetch(`${API_BASE_URL}/analyze-batch`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -146,7 +145,12 @@ async function postAnalyzeBatch(comments) {
         }
 
         const data = await response.json();
-        return normalizeAnalyzeResponse(data, comments);
+
+        if (!data || data.success !== true || !Array.isArray(data.results)) {
+            throw new Error("Invalid server response format");
+        }
+
+        return data;
     } catch (error) {
         if (error?.name === "AbortError") {
             throw new Error("Request timed out");
