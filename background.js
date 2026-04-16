@@ -7,14 +7,14 @@ const ENV = {
 const CURRENT_ENV = ENV.PRODUCTION;
 
 const CONFIG = {
-  [ENV.LOCAL]: {
-    API_BASE_URL: "http://localhost:3000",
-    DEBUG: true,
-  },
-  [ENV.PRODUCTION]: {
-    API_BASE_URL: "https://youtube-comment-filter-server.onrender.com",
-    DEBUG: false,
-  },
+    [ENV.LOCAL]: {
+        API_BASE_URL: "http://localhost:3000",
+        DEBUG: true,
+    },
+    [ENV.PRODUCTION]: {
+        API_BASE_URL: "https://youtube-comment-filter-server.onrender.com",
+        DEBUG: false,
+    },
 };
 
 const REQUEST_TIMEOUT_MS = 45000;
@@ -121,76 +121,40 @@ function validateConfig(config) {
     }
 }
 
-async function postAnalyzeBatchWithCache(comments) {
-  const cacheKey = createBatchKey(comments);
-  const now = Date.now();
-
-  const cached = responseCache.get(cacheKey);
-  if (cached && now - cached.timestamp < RESPONSE_CACHE_TTL_MS) {
-    debugLog("cache hit");
-    return cached.data;
-  }
-
-  const inFlight = inFlightRequests.get(cacheKey);
-  if (inFlight) {
-    debugLog("reusing in-flight request");
-    return inFlight;
-  }
-
-  const requestPromise = (async () => {
-    try {
-      const data = await postAnalyzeBatch(comments);
-
-      responseCache.set(cacheKey, {
-        timestamp: Date.now(),
-        data,
-      });
-
-      cleanupExpiredCache();
-      return data;
-    } finally {
-      inFlightRequests.delete(cacheKey);
-    }
-  })();
-
-  inFlightRequests.set(cacheKey, requestPromise);
-  return requestPromise;
-}
-
 async function postAnalyzeBatch(comments) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  try {
-    const { API_BASE_URL } = getConfig();
-    const url = `${API_BASE_URL}/analyze-batch`;
+    try {
+        const { API_BASE_URL } = getConfig();
+        const url = `${API_BASE_URL}/analyze-batch`;
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ comments }),
-      signal: controller.signal,
-    });
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ comments }),
+            signal: controller.signal,
+        });
 
-    if (!response.ok) {
-      const errorText = await safeReadText(response);
-      throw new Error(
-        `Server error: ${response.status}${errorText ? ` - ${errorText}` : ""}`
-      );
+        if (!response.ok) {
+            const errorText = await safeReadText(response);
+            throw new Error(
+                `Server error: ${response.status}${errorText ? ` - ${errorText}` : ""}`
+            );
+        }
+
+        const data = await response.json();
+        return normalizeAnalyzeResponse(data, comments);
+    } catch (error) {
+        if (error?.name === "AbortError") {
+            throw new Error("Request timed out");
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
     }
-
-    const data = await response.json();
-    return normalizeAnalyzeResponse(data, comments);
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      throw new Error("Request timed out");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
 }
 
 function normalizeAnalyzeResponse(data, comments) {
