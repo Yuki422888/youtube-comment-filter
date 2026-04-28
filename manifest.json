@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "YouTube Toxic Comment Filter",
+  "name": "YouTube Toxic Comment Filter (Dev)",
   "description": "Automatically hide toxic comments on YouTube using AI.",
-  "version": "1.0.2",
+  "version": "1.0.3",
 
-  "permissions": ["storage"],
+  "permissions": [ "storage" ],
 
   "host_permissions": [
     "https://www.youtube.com/*",
-    "https://youtube-comment-filter-server.onrender.com/*"
+    "https://youtube-comment-filter-server.onrender.com/*",
+    "https://youtube-comment-filter-server-dev.onrender.com/*"
   ],
 
   "background": {
@@ -27,8 +28,8 @@
 
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/*"],
-      "js": ["content.js"],
+      "matches": [ "https://www.youtube.com/*" ],
+      "js": [ "content.js" ],
       "run_at": "document_idle"
     }
   ]

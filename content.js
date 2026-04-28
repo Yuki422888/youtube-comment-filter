@@ -731,75 +731,97 @@
     }
   }
 
-  async function flushQueue() {
-    queueTimer = null;
+    async function flushQueue() {
+        queueTimer = null;
 
-    if (analyzeQueue.length === 0) return;
+        if (analyzeQueue.length === 0) return;
 
-    const batch = analyzeQueue.splice(0, MAX_BATCH_SIZE);
-    batch.forEach((item) => {
-      item.queued = false;
-    });
+        const batch = analyzeQueue.splice(0, MAX_BATCH_SIZE);
+        batch.forEach((item) => {
+            item.queued = false;
+        });
 
-    const uncachedItems = [];
-    const uncachedTexts = [];
+        const uncachedItems = [];
+        const uncachedTexts = [];
 
-    for (const item of batch) {
-      const cachedScore = getCachedScore(item.text);
+        for (const item of batch) {
+            const cachedScore = getCachedScore(item.text);
 
-      if (cachedScore != null) {
-        applyScore(item, cachedScore, true);
-      } else {
-        uncachedItems.push(item);
-        uncachedTexts.push(item.text);
-      }
+            if (cachedScore != null) {
+                applyScore(item, cachedScore, true);
+            } else {
+                uncachedItems.push(item);
+                uncachedTexts.push(item.text);
+            }
+        }
+
+        if (uncachedItems.length === 0) {
+            if (analyzeQueue.length > 0) {
+                queueTimer = setTimeout(flushQueue, BATCH_DELAY_MS);
+            }
+            return;
+        }
+
+        try {
+            const response = await sendBatchForAnalysis(uncachedTexts);
+
+            if (!response || typeof response !== "object") {
+                throw new Error("Invalid analyze-batch response");
+            }
+
+            if (response.success === false) {
+                console.warn("[YTCF] server returned failure:", response);
+
+                uncachedItems.forEach((commentData) => {
+                    handleAnalysisFailure(commentData, response.error || "server_failure");
+                });
+
+                return;
+            }
+
+            const results = Array.isArray(response.results) ? response.results : [];
+
+            if (results.length === 0) {
+                console.warn("[YTCF] no results returned, fail-open:", response);
+
+                uncachedItems.forEach((commentData) => {
+                    handleAnalysisFailure(commentData, response.message || "empty_results");
+                });
+
+                return;
+            }
+
+            let didUpdateCache = false;
+
+            results.forEach((result, index) => {
+                const commentData = uncachedItems[index];
+                if (!commentData) return;
+
+                const rawScore = result?.score;
+                const score = Number.isFinite(Number(rawScore)) ? Number(rawScore) : 0;
+
+                setCachedScore(commentData.text, score, false);
+                didUpdateCache = true;
+
+                clearRetry(commentData);
+                applyScore(commentData, score, true);
+            });
+
+            if (didUpdateCache) {
+                schedulePersistSessionCache();
+            }
+        } catch (error) {
+            console.error("[YTCF] analyze-batch error:", error);
+
+            uncachedItems.forEach((commentData) => {
+                handleAnalysisFailure(commentData, error);
+            });
+        }
+
+        if (analyzeQueue.length > 0) {
+            queueTimer = setTimeout(flushQueue, BATCH_DELAY_MS);
+        }
     }
-
-    if (uncachedItems.length === 0) {
-      if (analyzeQueue.length > 0) {
-        queueTimer = setTimeout(flushQueue, BATCH_DELAY_MS);
-      }
-      return;
-    }
-
-    try {
-      const response = await sendBatchForAnalysis(uncachedTexts);
-
-      if (!response || !Array.isArray(response.results)) {
-        throw new Error("Invalid analyze-batch response");
-      }
-
-      let didUpdateCache = false;
-
-      response.results.forEach((result, index) => {
-        const commentData = uncachedItems[index];
-        if (!commentData) return;
-
-        const rawScore = result?.score;
-        const score = Number.isFinite(Number(rawScore)) ? Number(rawScore) : 0;
-
-        setCachedScore(commentData.text, score, false);
-        didUpdateCache = true;
-
-        clearRetry(commentData);
-        applyScore(commentData, score, true);
-      });
-
-      if (didUpdateCache) {
-        schedulePersistSessionCache();
-      }
-    } catch (error) {
-      console.error("[YTCF] analyze-batch error:", error);
-
-      uncachedItems.forEach((commentData) => {
-        handleAnalysisFailure(commentData, error);
-      });
-    }
-
-    if (analyzeQueue.length > 0) {
-      queueTimer = setTimeout(flushQueue, BATCH_DELAY_MS);
-    }
-  }
 
   function handleAnalysisFailure(commentData, error) {
     const delay = RETRY_DELAYS_MS[commentData.retryCount];
@@ -871,7 +893,7 @@
             return;
           }
 
-          resolve(response.data);
+          resolve(response.data || response);
         }
       );
     });

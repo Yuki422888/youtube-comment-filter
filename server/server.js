@@ -1,15 +1,16 @@
 import express from "express";
 import cors from "cors";
 import OpenAI from "openai";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 const app = express();
+
+// Render などのプロキシ配下で req.ip を正しく扱う
+app.set("trust proxy", 1);
 const PORT = Number(process.env.PORT || 3000);
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const EXTENSION_SHARED_TOKEN = process.env.EXTENSION_SHARED_TOKEN || "";
-const EXTENSION_SHARED_TOKEN_PREVIOUS =
-    process.env.EXTENSION_SHARED_TOKEN_PREVIOUS || "";
+
 
 const client = new OpenAI({ apiKey: OPENAI_API_KEY });
 
@@ -19,16 +20,38 @@ const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "1mb";
 
 // 公開版 extension の ID から確定した Origin
 const PUBLIC_EXTENSION_ORIGIN =
-    "chrome-extension://dhbpeapnaoeibclpccaancdfillbdhdm";
+    "chrome-extension://inbmlnfjnjhinmgfipcefkmecmimbjhi";
 
 const envAllowedOrigins = (process.env.ALLOWED_ORIGINS || "")
     .split(",")
     .map((v) => v.trim())
     .filter(Boolean);
 
-const allowedOrigins = Array.from(
-    new Set([PUBLIC_EXTENSION_ORIGIN, ...envAllowedOrigins])
-);
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+function originGuard(req, res, next) {
+    const origin = req.get("origin");
+
+    // Chrome拡張からのfetchには origin が入る想定
+    if (!origin) {
+        return res.status(403).json({
+            success: false,
+            error: "Missing origin",
+        });
+    }
+
+    if (!allowedOrigins.includes(origin)) {
+        return res.status(403).json({
+            success: false,
+            error: "Origin not allowed",
+        });
+    }
+
+    next();
+}
 
 // --- CORS -------------------------------------------------------------
 
@@ -46,7 +69,7 @@ const corsOptions = {
         return callback(new Error("Not allowed by CORS"));
     },
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "X-YTCF-Token"],
+    allowedHeaders: ["Content-Type"],
     optionsSuccessStatus: 204,
 };
 
@@ -69,13 +92,24 @@ app.use(express.json({ limit: JSON_BODY_LIMIT }));
 // --- Rate limit -------------------------------------------------------
 
 const analyzeBatchLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 120,
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60 * 1000),
+    limit: Number(process.env.RATE_LIMIT_MAX || 120),
     standardHeaders: true,
     legacyHeaders: false,
-    message: {
-        success: false,
-        error: "Too many requests. Please try again shortly.",
+
+    keyGenerator: (req) => {
+        return ipKeyGenerator(req.ip);
+    },
+
+    handler: (_req, res) => {
+        // UX優先：制限時も拡張側を壊さない
+        return res.status(200).json({
+            success: true,
+            degraded: true,
+            limited: true,
+            results: [],
+            message: "Rate limit reached. Fail-open.",
+        });
     },
 });
 
@@ -117,35 +151,12 @@ app.get("/healthz", (_req, res) => {
 
 // --- Auth -------------------------------------------------------------
 
-function isValidExtensionToken(token) {
-    if (!token) return false;
 
-    if (EXTENSION_SHARED_TOKEN && token === EXTENSION_SHARED_TOKEN) {
-        return true;
-    }
-
-    if (
-        EXTENSION_SHARED_TOKEN_PREVIOUS &&
-        token === EXTENSION_SHARED_TOKEN_PREVIOUS
-    ) {
-        return true;
-    }
-
-    return false;
-}
 
 // --- Main route -------------------------------------------------------
 
-app.post("/analyze-batch", analyzeBatchLimiter, async (req, res) => {
-    const token = req.get("X-YTCF-Token");
-
-    if (!isValidExtensionToken(token)) {
-        console.error("[auth] invalid token");
-        return res.status(401).json({
-            success: false,
-            error: "Unauthorized",
-        });
-    }
+app.post("/analyze-batch", originGuard, analyzeBatchLimiter, async (req, res) => { {
+    
 
     const comments = normalizeComments(req.body?.comments);
 
