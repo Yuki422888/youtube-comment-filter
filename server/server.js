@@ -19,18 +19,16 @@ const MAX_COMMENT_LENGTH = 500;
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "1mb";
 
 // 公開版 extension の ID から確定した Origin
-const PUBLIC_EXTENSION_ORIGIN =
-    "chrome-extension://inbmlnfjnjhinmgfipcefkmecmimbjhi";
+const PUBLIC_EXTENSION_ORIGIN = "chrome-extension://inbmlnfjnjhinmgfipcefkmecmimbjhi";
 
 const envAllowedOrigins = (process.env.ALLOWED_ORIGINS || "")
     .split(",")
-    .map((v) => v.trim())
-    .filter(Boolean);
-
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
-    .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+
+const allowedOrigins = Array.from(
+    new Set([PUBLIC_EXTENSION_ORIGIN, ...envAllowedOrigins])
+);
 
 function originGuard(req, res, next) {
     const origin = req.get("origin");
@@ -69,7 +67,7 @@ const corsOptions = {
         return callback(new Error("Not allowed by CORS"));
     },
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
+    allowedHeaders: ["Content-Type", "X-YTCF-Token"],
     optionsSuccessStatus: 204,
 };
 
