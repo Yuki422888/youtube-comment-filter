@@ -153,80 +153,82 @@ app.get("/healthz", (_req, res) => {
 
 // --- Main route -------------------------------------------------------
 
-app.post("/analyze-batch", originGuard, analyzeBatchLimiter, async (req, res) => { {
-    
+app.post("/analyze-batch", originGuard, analyzeBatchLimiter, async (req, res) => {
+    {
 
-    const comments = normalizeComments(req.body?.comments);
 
-    if (!comments.length) {
-        return res.status(400).json({
-            success: false,
-            error: "comments must be a non-empty array of strings",
-        });
-    }
+        const comments = normalizeComments(req.body?.comments);
 
-    try {
-        const finalResults = new Array(comments.length).fill(null);
-        const aiTargets = [];
-
-        comments.forEach((text, index) => {
-            const ruleScore = getRuleBasedScore(text);
-
-            if (ruleScore !== null) {
-                finalResults[index] = {
-                    index,
-                    text,
-                    score: clampScore(ruleScore),
-                    source: "rule",
-                };
-            } else {
-                aiTargets.push({ index, text });
-            }
-        });
-
-        if (aiTargets.length > 0) {
-            if (!OPENAI_API_KEY) {
-                throw new Error("OPENAI_API_KEY is not configured");
-            }
-
-            const gptResults = await analyzeByGPT(aiTargets);
-
-            gptResults.forEach((item) => {
-                finalResults[item.index] = item;
+        if (!comments.length) {
+            return res.status(400).json({
+                success: false,
+                error: "comments must be a non-empty array of strings",
             });
         }
 
-        const results = comments.map((text, index) => {
-            const item = finalResults[index];
+        try {
+            const finalResults = new Array(comments.length).fill(null);
+            const aiTargets = [];
 
-            return {
-                index,
-                text,
-                score: clampScore(item?.score),
-                source: item?.source || "unknown",
-            };
-        });
+            comments.forEach((text, index) => {
+                const ruleScore = getRuleBasedScore(text);
 
-        return res.json({
-            success: true,
-            degraded: false,
-            results,
-        });
-    } catch (error) {
-        console.error("[server] analyze-batch error:", error?.message || error);
+                if (ruleScore !== null) {
+                    finalResults[index] = {
+                        index,
+                        text,
+                        score: clampScore(ruleScore),
+                        source: "rule",
+                    };
+                } else {
+                    aiTargets.push({ index, text });
+                }
+            });
 
-        return res.json({
-            success: true,
-            degraded: true,
-            results: comments.map((text, index) => ({
-                index,
-                text,
-                score: 0,
-                source: "fail_open",
-            })),
-        });
+            if (aiTargets.length > 0) {
+                if (!OPENAI_API_KEY) {
+                    throw new Error("OPENAI_API_KEY is not configured");
+                }
+
+                const gptResults = await analyzeByGPT(aiTargets);
+
+                gptResults.forEach((item) => {
+                    finalResults[item.index] = item;
+                });
+            }
+
+            const results = comments.map((text, index) => {
+                const item = finalResults[index];
+
+                return {
+                    index,
+                    text,
+                    score: clampScore(item?.score),
+                    source: item?.source || "unknown",
+                };
+            });
+
+            return res.json({
+                success: true,
+                degraded: false,
+                results,
+            });
+        } catch (error) {
+            console.error("[server] analyze-batch error:", error?.message || error);
+
+            return res.json({
+                success: true,
+                degraded: true,
+                results: comments.map((text, index) => ({
+                    index,
+                    text,
+                    score: 0,
+                    source: "fail_open",
+                })),
+            });
+        }
     }
-});
+};
 
 // --- Helpers ----------------------------------------------------------
 
