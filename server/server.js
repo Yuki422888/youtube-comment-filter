@@ -228,7 +228,7 @@ app.post("/analyze-batch", originGuard, analyzeBatchLimiter, async (req, res) =>
             });
         }
     }
-};
+});
 
 // --- Helpers ----------------------------------------------------------
 
