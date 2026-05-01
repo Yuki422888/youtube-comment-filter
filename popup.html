@@ -142,55 +142,53 @@
   </style>
 </head>
 <body>
-  <div class="container">
-    <div>
-      <h1>YouTube Toxic Comment Filter</h1>
-      <div class="subtext">
-        YouTubeコメントの攻撃的・有害なコメントを自動でフィルタします。
-      </div>
-    </div>
+    <div class="container">
+        <div>
+            <h1>YouTube Toxic Comment Filter</h1>
+            <div class="subtext">
+                Automatically filters toxic and harmful YouTube comments.
+            </div>
+        </div>
+        YouTube Comment
+        <div class="card">
+            <div class="row">
+                <div class="label-group">
+                    <div class="label-title">Filter</div>
+                    <div class="label-desc">Automatically hide toxic comments</div>
+                </div>
 
-    <div class="card">
-      <div class="row">
-        <div class="label-group">
-          <div class="label-title">フィルター</div>
-          <div class="label-desc">有害コメントの自動非表示をON/OFF</div>
+                <label class="switch">
+                    <input type="checkbox" id="filterToggle" />
+                    <span class="slider-switch"></span>
+                </label>
+            </div>
         </div>
 
-        <label class="switch">
-          <input type="checkbox" id="filterToggle" />
-          <span class="slider-switch"></span>
-        </label>
-      </div>
-    </div>
+        <div class="card">
+            <div class="threshold-header">
+                <div class="label-group">
+                    <div class="label-title">Filter Strength</div>
+                    <div class="label-desc">Comments above this level will be hidden.</div>
+                </div>
+                <div class="threshold-value" id="thresholdValue">0.50</div>
+            </div>
 
-    <div class="card">
-      <div class="threshold-header">
-        <div class="label-group">
-          <div class="label-title">しきい値</div>
-          <div class="label-desc">この値以上を危険コメントとして判定</div>
+            <input type="range"
+                   id="thresholdSlider"
+                   min="0"
+                   max="1"
+                   step="0.01"
+                   value="0.5" />
         </div>
-        <div class="threshold-value" id="thresholdValue">0.50</div>
-      </div>
 
-      <input
-        type="range"
-        id="thresholdSlider"
-        min="0"
-        max="1"
-        step="0.01"
-        value="0.5"
-      />
-    </div>
+        <div class="status">
+            Default: 0.50. Lower values hide more comments. Higher values make the filter less strict.
+        </div>
 
-    <div class="status">
-      初期値は 0.50 です。値を下げるほど多くのコメントを非表示にし、上げるほど厳しさが弱まります。
+        <div class="footer">
+            Your settings are saved and applied automatically on YouTube.
+        </div>
     </div>
-
-    <div class="footer">
-      設定は保存され、YouTubeページ上の判定に反映されます。
-    </div>
-  </div>
 
   <script src="popup.js"></script>
 </body>

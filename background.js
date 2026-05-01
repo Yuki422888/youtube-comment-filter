@@ -9,7 +9,7 @@ const ENV = {
 // - 開発版拡張をローカル読み込みで試す間は DEV にする
 // - 本番パッケージを作る直前だけ PRODUCTION にする
 // ==============================
-const CURRENT_ENV = ENV.DEV;
+const CURRENT_ENV = ENV.PRODUCTION;;
 
 const CONFIG = {
     [ENV.LOCAL]: {
